@@ -1,0 +1,43 @@
+# การทดลอง metadata — เพิ่มอายุ เพศ น้ำหนัก ส่วนสูง เข้าไปเป็น input เสริม
+# เทียบกับ effb0_multiclass_masked ที่มีผลแล้ว (macro_f1 0.547, auc 0.861)
+# ต่างกันแค่ 2 บรรทัด (metadata_xlsx + use_metadata) ที่เหลือเหมือนกันหมด
+#
+# ข้อควรระวังตอนตีความ: metadata เป็นข้อมูล "ระดับคนไข้" แต่โจทย์เป็น "ระดับปล้อง"
+# ปล้องทั้ง 15 ของคนเดียวกันได้ metadata ชุดเดียวกันหมด แปลว่ามันบอกได้แค่
+# "คนนี้เสี่ยงแค่ไหน" ไม่ได้บอกว่า "ปล้องไหนหัก" — ถ้าตัวเลขดีขึ้น ต้องดูด้วยว่า
+# ดีขึ้นเพราะเข้าใจภาพดีขึ้น หรือแค่เดาจากอายุได้แม่นขึ้นเฉยๆ
+
+experiment:
+  name: effb0_multiclass_masked_metadata
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: multiclass
+  img_size: null
+  metadata_xlsx: data/raw/DataTable.xlsx    # <-- เพิ่ม
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+  use_metadata: true                         # <-- เพิ่ม
+  metadata_embed_dim: 16
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 15
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 3
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb0_multiclass_masked_metadata

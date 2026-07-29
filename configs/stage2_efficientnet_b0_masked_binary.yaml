@@ -1,0 +1,39 @@
+# การทดลอง binary — ยุบ grade 1,2,3 เป็น "เสียหาย" รวมกัน
+# เทียบกับ effb0_multiclass_masked ที่มีผลแล้ว (macro_f1 0.547, auc 0.861)
+# ต่างกันแค่ task: binary ที่เหลือเหมือนกันทุกบรรทัด รวมถึง split ชุดเดียวกัน
+#
+# ทำไมน่าลอง: ตอนนี้ recall ของ mild แย่มาก (0.196 = จับได้ 1 ใน 5)
+# การยุบเป็น 2 คลาสทำให้ตัวอย่างกลุ่มน้อยเพิ่มจาก 270 เป็น 978 ปล้อง
+# (ความไม่สมดุลลดจาก 40:1 เหลือ 11:1) — ดูว่าช่วยให้จับกลุ่มที่หักได้ดีขึ้นไหม
+
+experiment:
+  name: effb0_binary_masked
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: binary                 # <-- เปลี่ยนจาก multiclass
+  img_size: null
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 15
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 3
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb0_binary_masked

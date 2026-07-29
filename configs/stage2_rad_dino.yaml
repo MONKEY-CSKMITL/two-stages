@@ -1,0 +1,47 @@
+# การทดลองที่ 3 — RAD-DINO (ViT ที่ฝึกมาบนภาพ X-ray โดยเฉพาะ)
+#
+# ปรับ 3 จุดจาก config อื่น เพราะข้อจำกัดของเครื่อง (RTX 4060 Ti, VRAM 8GB):
+#   1. img_size: 224 (ไม่ใช่ 518 ตามสเปกทางการ)
+#      - ที่ 518px ViT ต้องประมวลผล 1,369 ชิ้นส่วนภาพ กลไก attention กิน VRAM
+#        แบบกำลังสอง -> 8GB ไม่พอแน่นอน
+#      - ผลพลอยได้: เทียบกับ CNN ได้แฟร์ขึ้น เพราะเห็นภาพขนาดเท่ากัน
+#      - ต้องเขียนระบุข้อจำกัดนี้ในเล่มด้วย
+#   2. freeze_backbone: true
+#      - เอกสารทางการของ RAD-DINO ระบุเองว่าปกติไม่ต้อง fine-tune ก็ได้ผลดี
+#      - เหมาะกับข้อมูลเราที่มีน้อย (833 คน) และทำให้เทรนเร็วขึ้นมาก
+#   3. batch_size: 32 (ลดจาก 64 กัน out of memory)
+#
+# ต้องติดตั้งเพิ่ม: pip install transformers
+# ครั้งแรกที่รันจะดาวน์โหลด weight ~350MB จาก HuggingFace (ใช้เวลาสักครู่)
+
+experiment:
+  name: raddino_multiclass_bbox
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_bbox
+  task: multiclass
+  img_size: 224               # บังคับ 224 (ไม่ใช้ 518 ตามเหตุผลด้านบน)
+
+model:
+  backbone: rad_dino
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: true       # ล็อก backbone -> เทรนเฉพาะ head + level embedding
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 15
+  batch_size: 32              # ลดลงกัน VRAM ไม่พอ
+  lr: 1.0e-3                  # สูงกว่าตัวอื่นเพราะเทรนแค่ head (พารามิเตอร์น้อย เรียนเร็วได้)
+  weight_decay: 1.0e-4
+  patience: 3
+  num_workers: 4
+
+output:
+  dir: outputs/runs/raddino_multiclass_bbox

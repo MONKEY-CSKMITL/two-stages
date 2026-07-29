@@ -1,0 +1,34 @@
+# การทดลองที่ 1 (baseline) — EfficientNet-B0
+# เป็นจุดอ้างอิงของทุกการทดลองต่อจากนี้
+
+experiment:
+  name: effb0_multiclass_bbox
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_bbox
+  task: multiclass
+  img_size: null              # null = ใช้ 224 (ค่ามาตรฐานของ backbone ตระกูล timm)
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 15                  # ลดจาก 20 เพราะเวลาจำกัด (early stopping อาจหยุดก่อนอยู่แล้ว)
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 3                 # ลดจาก 5 ให้หยุดเร็วขึ้นถ้าไม่ดีขึ้น
+  num_workers: 4              # ถ้าค้าง/error บน Windows ให้เปลี่ยนเป็น 0
+
+output:
+  dir: outputs/runs/effb0_multiclass_bbox
