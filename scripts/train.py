@@ -275,10 +275,12 @@ def main():
         for col, s in metadata_stats.items():
             print(f"    {col:8s}: mean={s['mean']:.1f}  std={s['std']:.1f}  median={s['median']:.1f}")
 
+    resize_mode = cfg["data"].get("resize_mode", "pad")   # "pad" (เดิม) หรือ "stretch"
+
     loaders = {}
     for split in ["train", "val", "test"]:
         ds = VertebraDataset(dfs[split], backbone=backbone, img_size=img_size,
-                             metadata_stats=metadata_stats)
+                             metadata_stats=metadata_stats, resize_mode=resize_mode)
         loaders[split] = DataLoader(
             ds,
             batch_size=batch_size,

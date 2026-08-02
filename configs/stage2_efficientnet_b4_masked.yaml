@@ -1,0 +1,36 @@
+# EfficientNet-B4 ที่ img_size=380 (ตรงสเปกทางการของ B4 พอดี)
+# เทียบคู่กับ stage2_raddino_masked_finetune_380.yaml — ทั้งคู่ img_size เท่ากัน
+# fine-tune เต็ม เท่ากัน ต่างกันแค่ตัว backbone เท่านั้น
+
+experiment:
+  name: effb4_multiclass_masked
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: multiclass
+  img_size: 224         
+  resize_mode: pad
+
+model:
+  backbone: efficientnet_b4
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false      # fine-tune เต็ม เท่ากับ RAD-DINO config คู่เทียบ
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 15
+  batch_size: 8             
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 3
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb4_multiclass_masked

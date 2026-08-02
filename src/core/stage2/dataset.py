@@ -255,7 +255,8 @@ class VertebraDataset(Dataset):
     """
 
     def __init__(self, df: pd.DataFrame, backbone: str = "efficientnet_b0",
-                 img_size: int = None, metadata_stats: dict = None):
+                 img_size: int = None, metadata_stats: dict = None,
+                 resize_mode: str = "pad"):
         """
         df = ตารางจาก load_split_csv()
         backbone = ชื่อ backbone ที่จะเทรนด้วย (ใช้เลือกวิธี normalize ให้ตรงกัน)
@@ -263,14 +264,17 @@ class VertebraDataset(Dataset):
                    ของ backbone นั้นอัตโนมัติจาก transforms.py (224 ทั่วไป, 518 สำหรับ rad_dino)
         metadata_stats = ค่าสถิติสำหรับปรับสเกล metadata (จาก compute_metadata_stats)
                          ไม่ใส่ (None, ค่าเริ่มต้น) = ไม่ใช้ metadata, จะคืนเวกเตอร์ศูนย์แทน
+        resize_mode = "pad" (ค่าเริ่มต้น, พฤติกรรมเดิม) เติมขอบดำ รักษาสัดส่วนกระดูก
+                      "stretch" ยืดเต็มกรอบ ไม่รักษาสัดส่วน (ใช้ได้กับ backbone ทั่วไปเท่านั้น)
 
         ไม่มีตัวเลือกดัดแปลงรูป — ทุกชุด (train/val/test) เตรียมรูปเหมือนกันหมด
-        คือย่อ+เติมขอบ+ปรับสเกลเท่านั้น ไม่มีการแต่งภาพใดๆ
+        คือย่อ+ปรับสเกลเท่านั้น ไม่มีการแต่งภาพใดๆ
         """
         self.df = df.reset_index(drop=True)   # เก็บตารางไว้ใช้ (self = ตัวแปรของ object นี้)
         self.backbone = backbone
         self.img_size = img_size   # อาจเป็น None -> ให้ transforms.py เลือก default ให้เอง
         self.metadata_stats = metadata_stats
+        self.resize_mode = resize_mode
 
     def __len__(self):
         return len(self.df)   # จำนวนแถวในตาราง = จำนวนตัวอย่างทั้งหมด
@@ -289,7 +293,8 @@ class VertebraDataset(Dataset):
         row = self.df.iloc[idx]   # .iloc[ตำแหน่ง] = ดึงแถวที่ตำแหน่งนี้ออกมา
 
         # เตรียมรูป (เรียกฟังก์ชันจาก transforms.py) — ส่ง backbone ไปด้วยให้เลือก normalize ถูกแบบ
-        img = prepare_image(row["crop_path"], backbone=self.backbone, size=self.img_size)
+        img = prepare_image(row["crop_path"], backbone=self.backbone, size=self.img_size,
+                            resize_mode=self.resize_mode)
 
         # แปลง level จาก 1-15 (แบบที่คนอ่าน) เป็น 0-14 (แบบที่โมเดลใช้)
         # เพราะตารางค้นหาใน level embedding เริ่มนับจากแถวที่ 0 ไม่ใช่แถวที่ 1

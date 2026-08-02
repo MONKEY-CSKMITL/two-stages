@@ -1,0 +1,43 @@
+# การทดลอง stretch resize — ยืดเต็มกรอบแทนการเติมขอบดำ (ตามที่อาจารย์เสนอ)
+# เทียบกับ effb0_multiclass_masked ที่มีผลแล้ว (macro_f1 0.547, auc 0.861)
+# ต่างกันแค่ 1 บรรทัด (resize_mode) ที่เหลือเหมือนกันหมด
+#
+# เหตุผลที่น่าลอง: Grad-CAM พบว่าโมเดล masked บางเคสมองพื้นที่ดำว่างที่เกิดจาก
+# padding แทนตัวกระดูก stretch ตัดปัญหานี้ทิ้งเพราะไม่มีพื้นที่ว่างเหลือเลย
+#
+# ความเสี่ยงที่ต้องตรวจสอบคู่กับ Grad-CAM เสมอ: การยืดไม่รักษาสัดส่วน อาจบิด
+# ความสูงของกระดูก (ซึ่งเป็นหลักการวัด Genant grade โดยตรง) ไม่เท่ากันในแต่ละ
+# ปล้อง/ความรุนแรง — ต้องดูว่าโมเดลกลับไปมองกระดูกจริง ไม่ใช่แค่ metric ขึ้น
+
+experiment:
+  name: effb0_multiclass_masked_stretch
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: multiclass
+  img_size: null
+  resize_mode: stretch          # <-- เปลี่ยนจาก pad (ค่าเริ่มต้น)
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 15
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 3
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb0_multiclass_masked_stretch

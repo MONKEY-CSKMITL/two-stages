@@ -39,7 +39,7 @@ RAD_DINO_BACKBONES = {"rad_dino"}
 
 
 def prepare_image(path: str, backbone: str = "efficientnet_b0", size: int = None,
-                  preprocess_fn=None) -> np.ndarray:
+                  preprocess_fn=None, resize_mode: str = "pad") -> np.ndarray:
     """
     จุดเข้าเดียวที่ dataset.py เรียกใช้ — เลือกวิธีเตรียมรูปให้อัตโนมัติตามชื่อ backbone
 
@@ -52,6 +52,10 @@ def prepare_image(path: str, backbone: str = "efficientnet_b0", size: int = None
             preprocess_fn = (ไม่บังคับ) ฟังก์ชันเสริมสำหรับแต่งภาพเพิ่ม เช่น CLAHE, denoise
                             ถ้าไม่ใส่ (ค่าเริ่มต้น None) พฤติกรรมเหมือนเดิมทุกประการ
                             ใช้ได้ทั้ง 2 เส้นทางเท่ากัน (ทั้งคู่เขียนเองด้วย PIL แล้ว)
+            resize_mode  = "pad" (ค่าเริ่มต้น) เติมขอบดำ รักษาสัดส่วนกระดูก
+                           "stretch" ยืดเต็มกรอบ ไม่รักษาสัดส่วน — ใช้ได้เฉพาะเส้นทาง
+                           backbone ทั่วไปเท่านั้น (rad_dino ใช้ center-crop ตามสเปกทางการ
+                           อยู่แล้ว ไม่มีพื้นที่ว่างให้เลือกวิธีเติม จึงไม่รับพารามิเตอร์นี้)
     output: numpy array รูปร่าง (3, H, W) พร้อมป้อนโมเดล
     """
     if backbone in RAD_DINO_BACKBONES:
@@ -60,30 +64,56 @@ def prepare_image(path: str, backbone: str = "efficientnet_b0", size: int = None
         return _prepare_rad_dino(path, actual_size, preprocess_fn)
     # ไม่ใส่ size มา -> ใช้ 224 (ค่ามาตรฐานของ backbone ตระกูล timm ทั่วไป)
     actual_size = size if size is not None else 224
-    return _prepare_standard(path, actual_size, preprocess_fn)
+    return _prepare_standard(path, actual_size, preprocess_fn, resize_mode)
 
 
-def _prepare_standard(path: str, size: int, preprocess_fn=None) -> np.ndarray:
+def _prepare_standard(path: str, size: int, preprocess_fn=None,
+                      resize_mode: str = "pad") -> np.ndarray:
     """
-    เส้นทางทั่วไป: ย่อ(รักษาสัดส่วน)+เติมขอบดำ+3ช่องสี+normalize แบบ ImageNet
+    เส้นทางทั่วไป: ย่อ+3ช่องสี+normalize แบบ ImageNet
     ใช้กับ backbone ตระกูล timm ทั่วไป (EfficientNet, ConvNeXt, ฯลฯ)
+
+    resize_mode ควบคุมวิธีทำให้รูปเป็นจัตุรัส (มี 2 แบบ แยกจากกันเด็ดขาด):
+      "pad"    (ค่าเริ่มต้น — พฤติกรรมเดิมของโค้ด ไม่เปลี่ยนอะไรถ้าไม่ระบุ)
+               ย่อรูปให้พอดีด้านยาวสุด รักษาสัดส่วนเดิม แล้วเติมขอบดำรอบๆ
+               ข้อดี: กระดูกไม่ผิดสัดส่วนเลย
+               ข้อเสีย: มีพื้นที่ดำว่างเปล่า ซึ่ง Grad-CAM เคยพบว่าโมเดลบางเคส
+               ไปมองพื้นที่ว่างนี้แทนตัวกระดูกจริง
+
+      "stretch" (ตัวเลือกใหม่ — ต้องระบุมาเท่านั้นถึงจะใช้)
+               ยืด/บีบรูปให้เต็มจัตุรัสตรงๆ ไม่รักษาสัดส่วน ไม่มีพื้นที่ว่างเลย
+               ข้อดี: ไม่มีพื้นที่ดำให้โมเดลหลบไปมอง
+               ข้อเสีย: กระดูกผิดสัดส่วน — แต่ละปล้องโดนยืดไม่เท่ากัน (ปล้องที่แบน
+               จากการหักรุนแรงจะโดนยืดแนวตั้งมากกว่าปล้องปกติ) อาจกระทบการวัด
+               ความสูงซึ่งเป็นหลักการวัด Genant grade โดยตรง — ต้องตรวจด้วย
+               Grad-CAM ควบคู่เสมอว่าโมเดลกลับไปมองกระดูกจริงหรือยังมองที่อื่น
     """
     img = Image.open(path).convert("L")
 
     if preprocess_fn is not None:
         img = preprocess_fn(img)
 
-    # ย่อรูปให้พอดีกรอบ โดยรักษาสัดส่วนเดิม (ไม่บีบ ไม่ยืด กันกระดูกผิดสัดส่วน)
-    w, h = img.size
-    scale = size / max(w, h)
-    new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
-    img = img.resize((new_w, new_h))
+    if resize_mode == "stretch":
+        # ยืดตรงๆ ให้เป็น size x size โดยไม่สนสัดส่วนเดิมเลย
+        # (ไม่ต้องคำนวณ canvas/paste เพราะไม่มีพื้นที่ว่างเหลือให้เติม)
+        img = img.resize((size, size))
 
-    # เติมขอบดำให้เป็นจัตุรัสขนาด size x size (วางรูปไว้กึ่งกลาง)
-    canvas = Image.new("L", (size, size), 0)
-    canvas.paste(img, ((size - new_w) // 2, (size - new_h) // 2))
+    elif resize_mode == "pad":
+        # ย่อรูปให้พอดีกรอบ โดยรักษาสัดส่วนเดิม (ไม่บีบ ไม่ยืด กันกระดูกผิดสัดส่วน)
+        w, h = img.size
+        scale = size / max(w, h)
+        new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+        img = img.resize((new_w, new_h))
 
-    gray = np.array(canvas, dtype=np.float32) / 255.0
+        # เติมขอบดำให้เป็นจัตุรัสขนาด size x size (วางรูปไว้กึ่งกลาง)
+        canvas = Image.new("L", (size, size), 0)
+        canvas.paste(img, ((size - new_w) // 2, (size - new_h) // 2))
+        img = canvas
+
+    else:
+        raise ValueError(f"resize_mode ต้องเป็น 'pad' หรือ 'stretch' เท่านั้น ได้รับ '{resize_mode}'")
+
+    gray = np.array(img, dtype=np.float32) / 255.0
     rgb = np.stack([gray, gray, gray], axis=-1)
     rgb = (rgb - IMAGENET_MEAN) / IMAGENET_STD
     return rgb.transpose(2, 0, 1).astype(np.float32)

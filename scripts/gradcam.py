@@ -159,7 +159,8 @@ def main():
 
     ds = VertebraDataset(df, backbone=backbone,
                          img_size=cfg["data"].get("img_size"),
-                         metadata_stats=metadata_stats)
+                         metadata_stats=metadata_stats,
+                         resize_mode=cfg["data"].get("resize_mode", "pad"))
 
     # --- โหลดโมเดลที่เทรนแล้ว ---
     model = build_model(

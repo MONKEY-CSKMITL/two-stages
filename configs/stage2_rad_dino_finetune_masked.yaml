@@ -1,0 +1,34 @@
+# RAD-DINO fine-tune เต็ม ที่ img_size=224 — เทียบคู่กับ stage2_effb4_masked
+
+experiment:
+  name: raddino_multiclass_masked_finetune
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: multiclass
+  img_size: 224
+  resize_mode: pad
+
+model:
+  backbone: rad_dino
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false      # fine-tune เต็ม (ตามที่ตกลงไว้ก่อนหน้า แก้ confound เดิม)
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 15
+  batch_size: 8                # เล็กกว่า B4 มาก เพราะ ViT กิน VRAM แบบกำลังสอง
+  lr: 1.0e-5                    # ต่ำ เพราะ fine-tune ทั้ง ViT-B (86M param)
+  weight_decay: 1.0e-4
+  patience: 3
+  num_workers: 4
+
+output:
+  dir: outputs/runs/raddino_multiclass_masked_finetune
