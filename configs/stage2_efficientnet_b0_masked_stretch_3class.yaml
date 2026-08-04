@@ -1,0 +1,36 @@
+# การทดลอง 3class — ยุบ grade 1+2 (mild+moderate) เป็น "เสียหายปานกลาง"
+# แต่ใช้ resize mode แบบ stretch
+# grade 0 = ปกติ, grade 3 = เสียหายมาก (แยกออกจากกลุ่มกลาง)
+
+experiment:
+  name: effb0_3class_masked_stretch
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: 3class                # <-- เปลี่ยนจาก multiclass
+  img_size: null
+  resize_mode: stretch
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 15
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 3
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb0_3class_masked_stretch
