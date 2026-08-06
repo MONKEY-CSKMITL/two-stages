@@ -42,6 +42,8 @@ from core.stage2.dataset import (load_split_csv, VertebraDataset,
                                  compute_metadata_stats, NUM_METADATA)
 from core.stage2.model import build_model, count_parameters
 from core.stage2.losses import FocalLoss
+from core.stage2.losses_ce import WeightedCrossEntropyLoss
+from core.stage2.sampling import DownsampledNormalSampler
 from core.utils.reporting import generate_all_reports
 
 
@@ -280,18 +282,32 @@ def main():
     resize_mode = cfg["data"].get("resize_mode", "pad")   # "pad" (เดิม) หรือ "stretch"
 
     loaders = {}
+    # downsample_ratio = สัดส่วน normal:fracture ที่ต้องการต่อ epoch (เช่น 5.0 = 5:1)
+    # ไม่ใส่ (None, ค่าเริ่มต้น) = ไม่ downsample เลย พฤติกรรมเหมือนเดิมทุกประการ
+    downsample_ratio = cfg["data"].get("downsample_ratio")
+
     for split in ["train", "val", "test"]:
         ds = VertebraDataset(dfs[split], backbone=backbone, img_size=img_size,
                              metadata_stats=metadata_stats, resize_mode=resize_mode)
-        loaders[split] = DataLoader(
-            ds,
-            batch_size=batch_size,
-            # shuffle เฉพาะชุด train — สลับลำดับทุก epoch ช่วยให้เรียนรู้ดีขึ้น
-            # ชุด val/test ไม่ shuffle เพื่อให้ผลออกมาเรียงเหมือนเดิมทุกครั้ง (ตรวจสอบง่าย)
-            shuffle=(split == "train"),
-            num_workers=num_workers,
-            pin_memory=(device == "cuda"),   # ช่วยให้ย้ายข้อมูลไป GPU เร็วขึ้น
-        )
+
+        if split == "train" and downsample_ratio is not None:
+            # ใช้ sampler แทน shuffle=True — สุ่มปล้อง normal ใหม่ทุก epoch ตาม ratio
+            # (val/test ไม่ downsample เลย ต้องวัดผลบนสัดส่วนธรรมชาติของโลกจริงเสมอ)
+            sampler = DownsampledNormalSampler(dfs["train"], ratio=downsample_ratio, seed=seed)
+            loaders[split] = DataLoader(
+                ds, batch_size=batch_size, sampler=sampler,   # sampler กับ shuffle ใช้พร้อมกันไม่ได้
+                num_workers=num_workers, pin_memory=(device == "cuda"),
+            )
+        else:
+            loaders[split] = DataLoader(
+                ds,
+                batch_size=batch_size,
+                # shuffle เฉพาะชุด train — สลับลำดับทุก epoch ช่วยให้เรียนรู้ดีขึ้น
+                # ชุด val/test ไม่ shuffle เพื่อให้ผลออกมาเรียงเหมือนเดิมทุกครั้ง (ตรวจสอบง่าย)
+                shuffle=(split == "train"),
+                num_workers=num_workers,
+                pin_memory=(device == "cuda"),   # ช่วยให้ย้ายข้อมูลไป GPU เร็วขึ้น
+            )
 
     # --- สร้างโมเดล ---
     model = build_model(
@@ -318,7 +334,20 @@ def main():
         alpha = compute_class_weights(dfs["train"], num_classes).to(device)
         print(f"น้ำหนักถ่วงคลาส: {[round(float(w), 2) for w in alpha]}")
 
-    criterion = FocalLoss(alpha=alpha, gamma=cfg["loss"].get("gamma", 2.0))
+    # เลือก loss function จาก config — ค่าเริ่มต้น "focal" เพื่อให้ config เก่าทุกไฟล์
+    # ที่ไม่มีบรรทัด loss.type ระบุไว้ (รันมาแล้วก่อนหน้านี้ทั้งหมด) ยังทำงานเหมือนเดิม
+    # ทุกประการ ไม่กระทบผลที่มีอยู่แล้วเลย
+    #
+    # "ce" (Weighted Cross Entropy) เหมาะกับตอนที่ downsample ข้อมูลให้สมดุลแล้ว
+    # (ไม่จำเป็นต้องมีกลไก "โฟกัสตัวอย่างยาก" ของ Focal Loss ซ้อนอีกชั้น)
+    loss_type = cfg["loss"].get("type", "focal")
+    if loss_type == "focal":
+        criterion = FocalLoss(alpha=alpha, gamma=cfg["loss"].get("gamma", 2.0))
+    elif loss_type == "ce":
+        criterion = WeightedCrossEntropyLoss(alpha=alpha)
+    else:
+        raise ValueError(f"loss.type ต้องเป็น 'focal' หรือ 'ce' เท่านั้น ได้รับ '{loss_type}'")
+    print(f"loss function: {loss_type}")
 
     # AdamW = อัลกอริทึมปรับ weight ที่นิยมใช้กับงานภาพ (ปรับความเร็วการเรียนรู้ให้แต่ละ weight เอง)
     optimizer = torch.optim.AdamW(

@@ -1,0 +1,41 @@
+# Downsampling 1.0:1 (normal:fracture) + loss=ce
+# ตัดปล้อง normal แบบสุ่มใหม่ทุก epoch (ทาง B ตามที่ตกลงกัน) — ปล้องที่หักใช้ครบทุกตัว
+# เทียบกับ effb0_multiclass_masked (ไม่ downsample เลย, macro_f1=0.547) เป็นฐาน
+#
+# use_class_weights: false เสมอ — เพราะ downsampling แก้ความไม่สมดุลที่ตัวข้อมูล
+# ไปแล้ว ไม่ต้องถ่วง alpha ซ้ำอีกชั้น (กันกด normal ลงหนักเกินไป/over-correct)
+
+experiment:
+  name: effb0_masked_ds1to1_ce
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: multiclass
+  img_size: null
+  resize_mode: pad
+  downsample_ratio: 1.0          # <-- ใหม่: สุ่มลด normal เหลือ 1.0:1 ต่อ fracture ทุก epoch
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+
+loss:
+  type: ce                  # ce = cross entropy ล้วน, focal = ยังเปิด gamma (แต่ปิด alpha)
+  gamma: 2.0                          # ใช้แค่ตอน type=focal เท่านั้น (ce ไม่สนบรรทัดนี้)
+  use_class_weights: false            # ปิดเสมอ ไม่ว่า loss แบบไหน (ตามที่ตกลงกันไว้)
+
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 15
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb0_masked_ds1to1_ce
