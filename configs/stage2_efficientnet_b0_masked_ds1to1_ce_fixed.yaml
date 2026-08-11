@@ -1,4 +1,4 @@
-# Downsampling 3.0:1 (normal:fracture) + loss=ce
+# Downsampling 1.0:1 (normal:fracture) + loss=ce
 # ตัดปล้อง normal แบบสุ่มใหม่ทุก epoch (ทาง B ตามที่ตกลงกัน) — ปล้องที่หักใช้ครบทุกตัว
 # เทียบกับ effb0_multiclass_masked (ไม่ downsample เลย, macro_f1=0.547) เป็นฐาน
 #
@@ -6,7 +6,7 @@
 # ไปแล้ว ไม่ต้องถ่วง alpha ซ้ำอีกชั้น (กันกด normal ลงหนักเกินไป/over-correct)
 
 experiment:
-  name: effb0_masked_ds3to1_ce
+  name: effb0_masked_ds1to1_ce_fixed
   seed: 42
 
 data:
@@ -15,7 +15,8 @@ data:
   task: multiclass
   img_size: null
   resize_mode: pad
-  downsample_ratio: 3.0          # <-- ใหม่: สุ่มลด normal เหลือ 3.0:1 ต่อ fracture ทุก epoch
+  downsample_ratio: 1.0
+  downsample_mode: fixed          # <-- ใหม่: สุ่มครั้งเดียว ใช้ซ้ำทุก epoch          # <-- ใหม่: สุ่มลด normal เหลือ 1.0:1 ต่อ fracture ทุก epoch
 
 model:
   backbone: efficientnet_b0
@@ -30,12 +31,12 @@ loss:
   use_class_weights: false            # ปิดเสมอ ไม่ว่า loss แบบไหน (ตามที่ตกลงกันไว้)
 
 train:
-  epochs: 15
+  epochs: 50
   batch_size: 64
   lr: 1.0e-4
   weight_decay: 1.0e-4
-  patience: 3
+  patience: 15
   num_workers: 4
 
 output:
-  dir: outputs/runs/effb0_masked_ds3to1_ce
+  dir: outputs/runs/effb0_masked_ds1to1_ce_fixed
