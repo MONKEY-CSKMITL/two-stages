@@ -39,7 +39,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from core.stage2.dataset import (load_split_csv, VertebraDataset, TASKS,
                                  load_metadata, attach_metadata,
                                  compute_metadata_stats, NUM_METADATA)
+from core.stage2.channels import get_channel_spec
+from core.stage2.geometry import (load_geometry, attach_geometry,
+                                  compute_geometry_stats, NUM_GEOMETRY)
 from core.stage2.model import build_model
+from core.stage2.preprocessing import get_preprocess_fn
 from core.stage2.transforms import IMAGENET_MEAN, IMAGENET_STD
 
 LEVEL_NAMES = ["T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10",
@@ -56,18 +60,21 @@ class SingleInputWrapper(torch.nn.Module):
     (ซึ่งถูกต้องตามที่เราต้องการ เพราะเราอยากรู้ว่า "ในรูป" ตรงไหนสำคัญ)
     """
 
-    def __init__(self, model, level_idx: int, metadata: torch.Tensor, device):
+    def __init__(self, model, level_idx: int, metadata: torch.Tensor,
+                 geometry: torch.Tensor, device):
         super().__init__()
         self.model = model
         self.level_idx = level_idx
         self.metadata = metadata     # (1, NUM_METADATA)
+        self.geometry = geometry     # (1, NUM_GEOMETRY)
         self.device = device
 
     def forward(self, image):
         n = image.shape[0]
         lvl = torch.full((n,), self.level_idx, dtype=torch.long, device=self.device)
         meta = self.metadata.expand(n, -1).to(self.device)
-        return self.model(image, lvl, meta)
+        geom = self.geometry.expand(n, -1).to(self.device)
+        return self.model(image, lvl, meta, geom)
 
 
 def denormalize(img_tensor: torch.Tensor) -> np.ndarray:
@@ -79,7 +86,15 @@ def denormalize(img_tensor: torch.Tensor) -> np.ndarray:
     """
     img = img_tensor.detach().cpu().numpy().transpose(1, 2, 0)   # (C,H,W) -> (H,W,C)
     img = img * IMAGENET_STD + IMAGENET_MEAN                       # ย้อนสูตร normalize
-    return np.clip(img, 0, 1)
+    img = np.clip(img, 0, 1)
+
+    # ถ้าใช้สูตรช่องสีแบบผสม (เช่น gray/clahe/mask) 3 ช่องจะไม่เหมือนกันแล้ว
+    # การวาดตรงๆ จะได้ภาพสีแปลกๆ ที่ตีความไม่ได้ — ใช้ช่องแรก (ภาพขาวดำตามจริง)
+    # ซ้ำ 3 ครั้งแทน เพื่อให้พื้นหลังของ heatmap ยังเป็นภาพ X-ray ที่คนดูรู้เรื่อง
+    if not (np.allclose(img[..., 0], img[..., 1]) and np.allclose(img[..., 1], img[..., 2])):
+        img = np.stack([img[..., 0]] * 3, axis=-1)
+
+    return img
 
 
 def pick_samples(df, n_per_grade: int, seed: int = 42):
@@ -157,10 +172,25 @@ def main():
         train_df = attach_metadata(train_df, metadata)
         metadata_stats = compute_metadata_stats(train_df)
 
+    # geometry: หลักการเดียวกับ metadata — ค่าสถิติต้องมาจากชุด train เหมือนตอนเทรน
+    use_geometry = cfg["model"].get("use_geometry", False)
+    geometry_stats = None
+    if use_geometry:
+        geometry = load_geometry(cfg["data"]["geometry_manifest"])
+        df = attach_geometry(df, geometry)
+        train_df = load_split_csv(str(split_dir / f"{variant}_train.csv"), task=task)
+        train_df = attach_geometry(train_df, geometry)
+        geometry_stats = compute_geometry_stats(train_df)
+
+    # ต้องแต่งภาพแบบเดียวกับตอนเทรนเป๊ะ ไม่งั้น heatmap ที่ได้จะมาจากภาพคนละแบบ
+    # กับที่โมเดลเคยเห็น (อ่านจาก config_used.yaml ของ run นั้นจึงได้ค่าตรงกันเสมอ)
     ds = VertebraDataset(df, backbone=backbone,
                          img_size=cfg["data"].get("img_size"),
                          metadata_stats=metadata_stats,
-                         resize_mode=cfg["data"].get("resize_mode", "pad"))
+                         resize_mode=cfg["data"].get("resize_mode", "pad"),
+                         preprocess_fn=get_preprocess_fn(cfg["data"].get("preprocess")),
+                         geometry_stats=geometry_stats,
+                         channel_spec=get_channel_spec(cfg["data"].get("channels")))
 
     # --- โหลดโมเดลที่เทรนแล้ว ---
     model = build_model(
@@ -172,6 +202,9 @@ def main():
         use_metadata=use_metadata,
         num_metadata=NUM_METADATA,
         metadata_embed_dim=cfg["model"].get("metadata_embed_dim", 16),
+        use_geometry=use_geometry,
+        num_geometry=NUM_GEOMETRY,
+        geometry_embed_dim=cfg["model"].get("geometry_embed_dim", 16),
     ).to(device)
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.eval()
@@ -186,11 +219,12 @@ def main():
     # --- ทำ Grad-CAM ทีละภาพ ---
     results = []
     for true_grade, idx in picked:
-        image, level_idx, meta, label, grade4 = ds[idx]
+        image, level_idx, meta, geom, label, grade4 = ds[idx]
         image = image.unsqueeze(0).to(device)     # (1,3,H,W)
         meta = meta.unsqueeze(0)
+        geom = geom.unsqueeze(0)
 
-        wrapped = SingleInputWrapper(model, level_idx, meta, device).to(device).eval()
+        wrapped = SingleInputWrapper(model, level_idx, meta, geom, device).to(device).eval()
 
         # ให้โมเดลทายก่อน เพื่อรู้ว่าจะอธิบายคำตอบไหน
         with torch.no_grad():

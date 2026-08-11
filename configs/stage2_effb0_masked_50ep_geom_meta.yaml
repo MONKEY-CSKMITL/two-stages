@@ -1,0 +1,41 @@
+# A1: ป้อนฟีเจอร์รูปทรงระดับปล้อง (ar, fill, log_area, h_rel, w_rel, ar_rel)
+# เทียบกับ stage2_effb0_masked_50ep_pp_baseline.yaml ที่ต่างกันแค่ส่วน geometry/metadata
+
+experiment:
+  name: effb0_masked_50ep15p_geom_meta
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: multiclass
+  img_size: null
+  resize_mode: pad
+  preprocess: none
+  geometry_manifest: data/interim/crops/manifest.csv
+  metadata_xlsx: data/raw/DataTable.xlsx
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+  use_geometry: true
+  geometry_embed_dim: 16
+  use_metadata: true
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 15
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb0_masked_50ep15p_geom_meta

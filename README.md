@@ -235,6 +235,8 @@ outputs/runs/{ชื่อการทดลอง}/
 | ใช้ crop แบบไม่มีพื้นหลัง | `data.variant: xray_masked` |
 | โจทย์ 2 คลาส (เสียหาย/ไม่เสียหาย) | `data.task: binary` |
 | เพิ่มข้อมูลผู้ป่วย (อายุ/เพศ/น้ำหนัก/ส่วนสูง) | เพิ่ม `data.metadata_xlsx: data/raw/DataTable.xlsx` และ `model.use_metadata: true` |
+| ยืดภาพเต็มกรอบแทนการเติมขอบดำ | `data.resize_mode: stretch` (ไม่ใส่ = `pad`) |
+| แต่งภาพก่อนป้อนโมเดล | `data.preprocess: ชื่อฟังก์ชัน` — ชื่อที่ใช้ได้ดูจาก `PREPROCESS_FNS` ใน `src/core/stage2/preprocessing.py` (ไม่ใส่ = ไม่แต่งภาพ) |
 
 **อย่าลืมเปลี่ยน `experiment.name` และ `output.dir`** ทุกครั้งที่สร้าง config
 ใหม่ ไม่งั้นผลจะเขียนทับของเดิม

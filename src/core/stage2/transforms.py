@@ -39,7 +39,8 @@ RAD_DINO_BACKBONES = {"rad_dino"}
 
 
 def prepare_image(path: str, backbone: str = "efficientnet_b0", size: int = None,
-                  preprocess_fn=None, resize_mode: str = "pad") -> np.ndarray:
+                  preprocess_fn=None, resize_mode: str = "pad",
+                  augment_fn=None, channel_spec=None) -> np.ndarray:
     """
     จุดเข้าเดียวที่ dataset.py เรียกใช้ — เลือกวิธีเตรียมรูปให้อัตโนมัติตามชื่อ backbone
 
@@ -56,19 +57,39 @@ def prepare_image(path: str, backbone: str = "efficientnet_b0", size: int = None
                            "stretch" ยืดเต็มกรอบ ไม่รักษาสัดส่วน — ใช้ได้เฉพาะเส้นทาง
                            backbone ทั่วไปเท่านั้น (rad_dino ใช้ center-crop ตามสเปกทางการ
                            อยู่แล้ว ไม่มีพื้นที่ว่างให้เลือกวิธีเติม จึงไม่รับพารามิเตอร์นี้)
+            augment_fn   = (ไม่บังคับ) ฟังก์ชันสุ่มดัดแปลงภาพจาก augment.py
+                           **ใช้กับชุด train เท่านั้น** — dataset.py จะส่งมาเฉพาะชุด train
+                           ไม่ใส่ (ค่าเริ่มต้น None) = ไม่ทำ augmentation
+            channel_spec = (ไม่บังคับ) สูตร 3 ช่องสีจาก channels.py เช่น
+                           ("gray", "clahe", "mask") ไม่ใส่ = ("gray","gray","gray")
+                           ซึ่งคือการก๊อปช่องเดิม 3 ครั้งแบบเดิมทุกประการ
     output: numpy array รูปร่าง (3, H, W) พร้อมป้อนโมเดล
+
+    ลำดับในท่อ: เปิดไฟล์ -> preprocess_fn -> resize/pad -> augment_fn -> normalize
+    augment_fn อยู่ "หลัง" resize โดยตั้งใจ เพราะ crop ตัดชิดตัวกระดูกพอดี ถ้าหมุน
+    ตอนยังไม่ pad มุมกระดูกจะถูกตัดหายไป แต่หลัง pad แล้วมีพื้นที่ดำรองรับ
     """
     if backbone in RAD_DINO_BACKBONES:
+        # RAD-DINO ทำงานกับภาพ RGB ตั้งแต่ต้นทางตามสเปกทางการ ยังไม่รองรับสูตรช่องสี
+        # (ถ้าจะรองรับต้องรื้อเส้นทางนั้นใหม่ทั้งเส้น จึงกันไว้ให้ชัดดีกว่าปล่อยให้
+        # ตั้งค่าไปแล้วถูกเมินเงียบๆ โดยไม่รู้ตัว)
+        if channel_spec is not None and tuple(channel_spec) != ("gray", "gray", "gray"):
+            raise ValueError(
+                f"backbone='rad_dino' ยังไม่รองรับ data.channels = {tuple(channel_spec)} "
+                f"— ใช้ได้เฉพาะ 'gray3' เท่านั้น"
+            )
         # ไม่ใส่ size มา -> ใช้ 518 ตามสเปกทางการของ RAD-DINO
         actual_size = size if size is not None else RAD_DINO_SIZE
-        return _prepare_rad_dino(path, actual_size, preprocess_fn)
+        return _prepare_rad_dino(path, actual_size, preprocess_fn, augment_fn)
     # ไม่ใส่ size มา -> ใช้ 224 (ค่ามาตรฐานของ backbone ตระกูล timm ทั่วไป)
     actual_size = size if size is not None else 224
-    return _prepare_standard(path, actual_size, preprocess_fn, resize_mode)
+    return _prepare_standard(path, actual_size, preprocess_fn, resize_mode, augment_fn,
+                             channel_spec)
 
 
 def _prepare_standard(path: str, size: int, preprocess_fn=None,
-                      resize_mode: str = "pad") -> np.ndarray:
+                      resize_mode: str = "pad", augment_fn=None,
+                      channel_spec=None) -> np.ndarray:
     """
     เส้นทางทั่วไป: ย่อ+3ช่องสี+normalize แบบ ImageNet
     ใช้กับ backbone ตระกูล timm ทั่วไป (EfficientNet, ConvNeXt, ฯลฯ)
@@ -113,13 +134,23 @@ def _prepare_standard(path: str, size: int, preprocess_fn=None,
     else:
         raise ValueError(f"resize_mode ต้องเป็น 'pad' หรือ 'stretch' เท่านั้น ได้รับ '{resize_mode}'")
 
-    gray = np.array(img, dtype=np.float32) / 255.0
-    rgb = np.stack([gray, gray, gray], axis=-1)
+    # augmentation ทำตรงนี้ — หลัง resize/pad แล้ว ก่อนแปลงเป็นตัวเลข
+    # (เฉพาะชุด train เท่านั้น ซึ่ง dataset.py เป็นคนคุมว่าจะส่ง augment_fn มาไหม)
+    if augment_fn is not None:
+        img = augment_fn(img)
+
+    # ประกอบ 3 ช่องสีตามสูตร — ไม่ระบุสูตร = ก๊อปช่องเดิม 3 ครั้งเหมือนโค้ดเดิมเป๊ะ
+    # (import ตรงนี้ไม่ใช่บนหัวไฟล์ เพื่อเลี่ยง circular import: channels.py เรียกใช้
+    #  preprocessing.py ซึ่งเป็นคนละสายกับไฟล์นี้ แต่ไฟล์นี้ถูก dataset.py import อีกที)
+    from .channels import build_channels
+    spec = channel_spec if channel_spec is not None else ("gray", "gray", "gray")
+    rgb = build_channels(img, spec)
     rgb = (rgb - IMAGENET_MEAN) / IMAGENET_STD
     return rgb.transpose(2, 0, 1).astype(np.float32)
 
 
-def _prepare_rad_dino(path: str, size: int, preprocess_fn=None) -> np.ndarray:
+def _prepare_rad_dino(path: str, size: int, preprocess_fn=None,
+                      augment_fn=None) -> np.ndarray:
     """
     เส้นทาง RAD-DINO — เขียนเองตามสูตรจาก preprocessor_config.json ทางการ 4 ขั้นตอน:
       1. resize ให้ด้านสั้นสุด = size พิกเซล (รักษาสัดส่วน, bicubic ตาม resample=3 ในไฟล์ config)
@@ -147,6 +178,11 @@ def _prepare_rad_dino(path: str, size: int, preprocess_fn=None) -> np.ndarray:
     left = (new_w - size) // 2
     top = (new_h - size) // 2
     img = img.crop((left, top, left + size, top + size))
+
+    # augmentation ทำหลัง crop เสร็จ (จุดเดียวกับเส้นทางทั่วไป คือหลังภาพได้ขนาด
+    # สุดท้ายแล้ว) เฉพาะชุด train เท่านั้น
+    if augment_fn is not None:
+        img = augment_fn(img)
 
     # ขั้นที่ 3-4: แปลงเป็นตัวเลข, หารด้วย 255, normalize ด้วยค่าเฉพาะของ RAD-DINO
     arr = np.array(img, dtype=np.float32) / 255.0

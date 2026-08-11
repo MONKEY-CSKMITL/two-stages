@@ -40,10 +40,16 @@ from core.stage2.dataset import (load_split_csv, VertebraDataset,
                                  compute_class_weights, TASKS,
                                  load_metadata, attach_metadata,
                                  compute_metadata_stats, NUM_METADATA)
+from core.stage2.augment import get_augment_fn
+from core.stage2.channels import get_channel_spec, warn_if_mask_unusable
+from core.stage2.geometry import (load_geometry, attach_geometry,
+                                  compute_geometry_stats, NUM_GEOMETRY)
 from core.stage2.model import build_model, count_parameters
+from core.stage2.preprocessing import get_preprocess_fn
 from core.stage2.losses import FocalLoss
 from core.stage2.losses_ce import WeightedCrossEntropyLoss
 from core.stage2.sampling import DownsampledNormalSampler
+from core.utils.pipeline_viz import generate_pipeline_report
 from core.utils.reporting import generate_all_reports
 
 
@@ -140,13 +146,14 @@ def evaluate(model, loader, device, criterion=None):
     all_logits, all_targets, all_grade4, all_levels = [], [], [], []
     running_loss = 0.0
 
-    # DataLoader คืนข้อมูลทีละก้อน (batch) — แต่ละก้อนมี 4 อย่างตามที่ dataset กำหนด
-    for image, level_idx, metadata, label, grade_4class in loader:
+    # DataLoader คืนข้อมูลทีละก้อน (batch) — แต่ละก้อนมี 6 อย่างตามที่ dataset กำหนด
+    for image, level_idx, metadata, geometry, label, grade_4class in loader:
         image = image.to(device)          # ย้ายข้อมูลไปที่ GPU (หรือ CPU ถ้าไม่มี GPU)
         level_idx = level_idx.to(device)
         metadata = metadata.to(device)
+        geometry = geometry.to(device)
 
-        logits = model(image, level_idx, metadata)   # ให้โมเดลทาย
+        logits = model(image, level_idx, metadata, geometry)   # ให้โมเดลทาย
 
         # คำนวณ loss ของชุดนี้ด้วย (ถ้าส่ง criterion มา)
         if criterion is not None:
@@ -188,15 +195,16 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()   # สลับเป็นโหมด "เทรน" — Dropout เริ่มทำงาน
     running = 0.0
 
-    for image, level_idx, metadata, label, _grade4 in loader:   # _grade4 = ใช้ตอนวัดผล ไม่ใช้ตอนเทรน
+    for image, level_idx, metadata, geometry, label, _grade4 in loader:   # _grade4 = ใช้ตอนวัดผล ไม่ใช้ตอนเทรน
         image = image.to(device)
         level_idx = level_idx.to(device)
         metadata = metadata.to(device)
+        geometry = geometry.to(device)
         label = label.to(device)
 
         # --- 4 บรรทัดนี้คือหัวใจของการเรียนรู้ทั้งหมด ---
         optimizer.zero_grad()                   # 1. ล้างค่าที่ค้างจากรอบก่อน (PyTorch สะสมค่าไว้โดยปริยาย)
-        loss = criterion(model(image, level_idx, metadata), label)   # 2. ทาย แล้ววัดว่าผิดแค่ไหน
+        loss = criterion(model(image, level_idx, metadata, geometry), label)   # 2. ทาย แล้ววัดว่าผิดแค่ไหน
         loss.backward()                          # 3. คำนวณย้อนกลับว่าแต่ละ weight ควรปรับไปทางไหน
         optimizer.step()                         # 4. ปรับ weight จริงตามที่คำนวณได้
 
@@ -279,7 +287,59 @@ def main():
         for col, s in metadata_stats.items():
             print(f"    {col:8s}: mean={s['mean']:.1f}  std={s['std']:.1f}  median={s['median']:.1f}")
 
+    # --- geometry (ไม่บังคับ) ---
+    # ฟีเจอร์รูปทรงระดับปล้อง อ่านจาก manifest.csv ที่ crop.py เขียนไว้
+    # เปิดใช้เมื่อ config ระบุทั้ง data.geometry_manifest และ model.use_geometry: true
+    # (โครงเดียวกับ metadata ด้านบนทุกขั้นตอน แต่เป็นคนละสายในโมเดล เปิดพร้อมกันได้)
+    use_geometry = cfg["model"].get("use_geometry", False)
+    geometry_stats = None
+
+    if use_geometry:
+        geometry_path = cfg["data"].get("geometry_manifest")
+        if not geometry_path:
+            raise ValueError("ตั้ง model.use_geometry: true แล้ว ต้องระบุ data.geometry_manifest ด้วย")
+
+        print(f"\nโหลด geometry จาก {geometry_path}")
+        geometry = load_geometry(geometry_path)
+
+        for split in ["train", "val", "test"]:
+            dfs[split] = attach_geometry(dfs[split], geometry)
+
+        # ค่าสถิติจากชุด train เท่านั้น ด้วยเหตุผลเดียวกับ metadata (กันข้อมูลรั่ว)
+        geometry_stats = compute_geometry_stats(dfs["train"])
+        print("  ค่าสถิติที่ใช้ปรับสเกล (คำนวณจากชุด train เท่านั้น):")
+        for col, s in geometry_stats.items():
+            print(f"    {col:9s}: mean={s['mean']:7.3f}  std={s['std']:6.3f}  median={s['median']:7.3f}")
+
     resize_mode = cfg["data"].get("resize_mode", "pad")   # "pad" (เดิม) หรือ "stretch"
+
+    # preprocess = ชื่อฟังก์ชันแต่งภาพจาก preprocessing.py — ไม่ระบุ = ไม่แต่ง (เดิม)
+    # แปลงชื่อเป็นฟังก์ชันตั้งแต่ตรงนี้ ถ้าชื่อผิดจะ error ทันทีก่อนเริ่มเทรน
+    preprocess_name = cfg["data"].get("preprocess")
+    preprocess_fn = get_preprocess_fn(preprocess_name)
+
+    # augment = ชุดการสุ่มดัดแปลงภาพจาก augment.py — ไม่ระบุ = ไม่ทำ (เดิม)
+    augment_name = cfg["data"].get("augment")
+    augment_fn = get_augment_fn(augment_name)
+
+    # channels = สูตร 3 ช่องสี — ไม่ระบุ = ก๊อปช่องขาวดำ 3 ครั้งแบบเดิม
+    channels_name = cfg["data"].get("channels")
+    channel_spec = get_channel_spec(channels_name)
+    warn_if_mask_unusable(channel_spec, variant)
+
+    print(f"\nการเตรียมภาพ: resize_mode={resize_mode}  preprocess={preprocess_name or 'none'}"
+          f"  augment={augment_name or 'none'} (เฉพาะชุด train)")
+    print(f"  ช่องสีที่ป้อนโมเดล: {channels_name or 'gray3'} = {channel_spec}")
+
+    # กันพลาด: การหมุน/เลื่อนต้องมีพื้นที่ดำรองรับ ถ้าใช้ stretch จะไม่มีเลย
+    # มุมของกระดูกจะถูกตัดหายทันที — หยุดตั้งแต่ตอนนี้ดีกว่าปล่อยให้เทรนจนจบแล้ว
+    # ค่อยมางงว่าทำไมผลแย่
+    if augment_name in ("geometric", "standard", "strong") and resize_mode == "stretch":
+        raise ValueError(
+            f"data.augment='{augment_name}' มีการหมุน/เลื่อน ใช้กับ resize_mode='stretch' ไม่ได้ "
+            f"(ไม่มีพื้นที่ว่างรองรับ กระดูกจะโดนตัดมุม) — ใช้ resize_mode='pad' "
+            f"หรือเปลี่ยนเป็น data.augment='intensity'"
+        )
 
     loaders = {}
     # downsample_ratio = สัดส่วน normal:fracture ที่ต้องการต่อ epoch (เช่น 5.0 = 5:1)
@@ -287,8 +347,13 @@ def main():
     downsample_ratio = cfg["data"].get("downsample_ratio")
 
     for split in ["train", "val", "test"]:
+        # augment_fn ส่งให้ "เฉพาะชุด train" เท่านั้น — val/test ได้ None เสมอ
+        # นี่คือจุดเดียวที่คุมเรื่องนี้ ทำให้เผลอ augment ชุดวัดผลไม่ได้เลยโดยโครงสร้าง
         ds = VertebraDataset(dfs[split], backbone=backbone, img_size=img_size,
-                             metadata_stats=metadata_stats, resize_mode=resize_mode)
+                             metadata_stats=metadata_stats, resize_mode=resize_mode,
+                             preprocess_fn=preprocess_fn, geometry_stats=geometry_stats,
+                             augment_fn=(augment_fn if split == "train" else None),
+                             channel_spec=channel_spec)
 
         if split == "train" and downsample_ratio is not None:
             # ใช้ sampler แทน shuffle=True — สุ่มปล้อง normal ใหม่ทุก epoch ตาม ratio
@@ -309,6 +374,26 @@ def main():
                 pin_memory=(device == "cuda"),   # ช่วยให้ย้ายข้อมูลไป GPU เร็วขึ้น
             )
 
+    # --- บันทึกภาพ "ท่อเตรียมภาพ" ของรอบนี้ ---
+    # ทำก่อนเทรน เพื่อให้ทุกการทดลองมีหลักฐานติดไว้เสมอว่าป้อนภาพหน้าตาแบบไหนเข้าไป
+    # (ย้อนดูทีหลังได้โดยไม่ต้องเดาจากชื่อ config) ใช้เวลาไม่กี่วินาที
+    #
+    # ห่อด้วย try เพราะเป็นของแถม ไม่ใช่ส่วนหนึ่งของการเทรน — ถ้าวาดภาพพลาด
+    # ไม่ควรทำให้การเทรนที่ใช้เวลาเป็นสิบนาทีล้มไปด้วย แค่เตือนแล้วเทรนต่อ
+    try:
+        effective_size = img_size if img_size is not None else (518 if backbone == "rad_dino" else 224)
+        generate_pipeline_report(
+            dfs["train"], out_dir / "plots", prefix="pipeline",
+            backbone=backbone, size=effective_size, resize_mode=resize_mode,
+            preprocess_fn=preprocess_fn, augment_fn=augment_fn, channel_spec=channel_spec,
+            preprocess_name=preprocess_name or "none", augment_name=augment_name or "none",
+            channels_name=channels_name or "gray3",
+            n_per_grade=1, n_draws=3, seed=seed,
+        )
+        print("บันทึกภาพท่อเตรียมภาพไว้ที่ plots/pipeline_stages.png (+ histograms, stats.csv)")
+    except Exception as e:
+        print(f"  เตือน: วาดภาพท่อเตรียมภาพไม่สำเร็จ ({e}) — ข้ามไป เทรนต่อตามปกติ")
+
     # --- สร้างโมเดล ---
     model = build_model(
         backbone=backbone,
@@ -320,6 +405,9 @@ def main():
         use_metadata=use_metadata,
         num_metadata=NUM_METADATA,
         metadata_embed_dim=cfg["model"].get("metadata_embed_dim", 16),
+        use_geometry=use_geometry,
+        num_geometry=NUM_GEOMETRY,
+        geometry_embed_dim=cfg["model"].get("geometry_embed_dim", 16),
     ).to(device)
 
     p = count_parameters(model)
@@ -367,7 +455,35 @@ def main():
     patience = cfg["train"].get("patience", 5)
     best_score, best_epoch, bad_epochs = -1.0, -1, 0
 
-    print(f"\nเริ่มเทรน {epochs} รอบ (หยุดก่อนถ้าไม่ดีขึ้นติดกัน {patience} รอบ)\n")
+    # เกณฑ์ที่ใช้ทั้ง "เลือกรอบที่ดีที่สุด" และ "ตัดสินใจหยุดก่อนกำหนด"
+    #
+    # ทำไมต้องมีตัวเลือก: macro F1 บนชุด val ของงานนี้แกว่งมาก เพราะ val มี mild
+    # แค่ 47 ปล้องและ severe 40 ปล้อง — ทายถูกเพิ่ม 2-3 ปล้องก็ขยับ F1 ได้หลาย pp
+    # วัดจาก history จริงของ 11 การทดลอง (ช่วงที่ราบแล้ว epoch >= 5):
+    #     val_F1        sd = 2.29 pp
+    #     val_AUC       sd = 0.61 pp
+    #     (F1+AUC)/2    sd = 1.22 pp
+    # ความแกว่งขนาดนี้ทำให้ patience ตัดจบผิดจังหวะไปแล้ว 2 การทดลอง (หยุดที่
+    # epoch 2 และ 3 ทั้งที่ val_AUC ยังไต่ขึ้นอยู่) การเฉลี่ยกับ AUC ลด noise
+    # ลงครึ่งหนึ่งโดยยังคงน้ำหนักของ F1 ที่สะท้อนคลาสกลุ่มน้อยไว้
+    #
+    # ค่าเริ่มต้นยังเป็น "f1" เพื่อให้ config เก่าทั้งหมดรันซ้ำได้ผลเดิมเป๊ะ
+    # config ใหม่ควรระบุ train.select_metric: f1_auc ไว้ให้ชัด
+    select_metric = str(cfg["train"].get("select_metric", "f1")).strip().lower()
+    SELECT_FNS = {
+        "f1": lambda m: m["macro_f1"],
+        "auc": lambda m: m["auc"],
+        "f1_auc": lambda m: (m["macro_f1"] + m["auc"]) / 2.0,
+    }
+    if select_metric not in SELECT_FNS:
+        raise ValueError(
+            f"train.select_metric = '{select_metric}' ไม่รู้จัก — "
+            f"ต้องเป็นหนึ่งใน: {', '.join(sorted(SELECT_FNS))}"
+        )
+    score_fn = SELECT_FNS[select_metric]
+
+    print(f"\nเริ่มเทรน {epochs} รอบ (หยุดก่อนถ้าไม่ดีขึ้นติดกัน {patience} รอบ)")
+    print(f"เกณฑ์เลือกรอบที่ดีที่สุด: {select_metric}\n")
 
     # เก็บค่าราย epoch ไว้ทำกราฟตอนจบ
     history_rows = []
@@ -385,17 +501,22 @@ def main():
         print(f"epoch {epoch:02d}  train_loss={train_loss:.4f}  val_loss={val_out['loss']:.4f}  "
               f"val_F1={val_metrics['macro_f1']:.4f}  val_AUC={val_metrics['auc']:.4f}")
 
+        score = score_fn(val_metrics)
+
         history_rows.append({
             "epoch": epoch,
             "train_loss": train_loss,
             "val_loss": val_out["loss"],
             "val_f1": val_metrics["macro_f1"],
             "val_auc": val_metrics["auc"],
+            # เก็บคะแนนที่ใช้ตัดสินจริงไว้ด้วย จะได้ย้อนดูได้ว่าทำไมถึงเลือก epoch นั้น
+            # (ถ้าเกณฑ์เป็น f1 คอลัมน์นี้จะเท่ากับ val_f1 พอดี ไม่ใช่ข้อมูลซ้ำซ้อนเปล่าๆ
+            #  เพราะทำให้กราฟ/การวิเคราะห์ทีหลังใช้คอลัมน์เดียวได้ทุกกรณี)
+            "val_select_score": score,
         })
 
-        # ใช้ macro F1 บนชุด val เป็นตัวตัดสินว่ารอบไหนดีที่สุด
-        # (ไม่ใช้ accuracy เพราะข้อมูลไม่สมดุล — ทายปกติหมดก็ได้ accuracy สูงแต่ไร้ประโยชน์)
-        score = val_metrics["macro_f1"]
+        # ไม่ใช้ accuracy เป็นเกณฑ์เพราะข้อมูลไม่สมดุล — ทายปกติหมดก็ได้ accuracy
+        # สูงแต่ไร้ประโยชน์ (ดูเหตุผลของแต่ละเกณฑ์ที่ตอนประกาศ score_fn ด้านบน)
         if score > best_score:
             best_score, best_epoch, bad_epochs = score, epoch, 0
             torch.save(model.state_dict(), out_dir / "best.pt")   # เก็บเฉพาะ weight ที่ดีที่สุด
@@ -451,6 +572,13 @@ def main():
             "task": task,
             "variant": variant,
             "use_metadata": use_metadata,
+            "use_geometry": use_geometry,
+            "preprocess": preprocess_name or "none",
+            "augment": augment_name or "none",
+            "channels": channels_name or "gray3",
+            "select_metric": select_metric,
+            "best_select_score": best_score,
+            "resize_mode": resize_mode,
             "best_epoch": best_epoch,
             "test_metrics": test_metrics,
             "per_grade_recall": grade_breakdown,
