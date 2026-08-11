@@ -1,0 +1,52 @@
+# การทดลองรวม: preprocess=CLAHE + augment=strong + downsample=1:1 + loss=ce + metadata
+# โจทย์: 3class
+#
+# ⚠️ รวม 5 ตัวแปรพร้อมกัน (เทียบกับ baseline effb0_multiclass_masked ที่เปลี่ยน
+# แค่ตัวเดียว) — เหมาะเป็นการทดลอง "รวมทุกอย่างดูภาพรวม" ไม่ใช่ ablation แยกทีละตัว
+# ถ้าผลต่างจาก baseline มาก ต้องรัน ablation แยกทีละตัวเพิ่มถึงจะรู้ว่าตัวไหนคือสาเหตุ
+#
+# ⚠️ ชื่อ preprocess "clahe" และ augment "strong" ต้องตรงกับที่ลงทะเบียนไว้จริงใน
+# preprocessing.py/augment.py — ถ้าไม่ตรง โค้ดจะ error ทันทีก่อนเริ่มเทรน (เช็คง่าย)
+#
+# ⚠️ downsample_mode ตั้งเป็น dynamic ไว้ก่อน (ค่าเริ่มต้น) — เปลี่ยนเป็น fixed
+# ได้เลยถ้าต้องการ แค่แก้บรรทัด downsample_mode ด้านล่าง
+
+experiment:
+  name: effb0_3class_masked_clahe_strong_ds1to1_ce_meta
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: 3class
+  img_size: null
+  resize_mode: pad              # ต้องเป็น pad เท่านั้น — augment=strong มีหมุน/เลื่อน ใช้กับ stretch ไม่ได้
+  preprocess: clahe             # <-- เช็คชื่อให้ตรงกับ preprocessing.py จริง
+  augment: strong                # <-- ยืนยันแล้วว่าเป็นชื่อที่ train.py รู้จัก (เจอใน validation check)
+  downsample_ratio: 1.0
+  downsample_mode: fixed       # <-- เปลี่ยนเป็น fixed ได้ถ้าต้องการ
+  metadata_xlsx: data/raw/DataTable.xlsx
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+  use_metadata: true
+  metadata_embed_dim: 16
+
+loss:
+  type: ce
+  use_class_weights: false      # ปิดเสมอตอน downsample (ตามที่ตกลงกันไว้ก่อนหน้า กันกดซ้ำ 2 ต่อ)
+
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 15
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb0_3class_masked_clahe_strong_ds1to1_ce_meta

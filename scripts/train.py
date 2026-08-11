@@ -280,8 +280,7 @@ def main():
             dfs[split] = attach_metadata(dfs[split], metadata)
 
         # คำนวณค่าสถิติสำหรับปรับสเกลจาก "ชุด train เท่านั้น"
-        # ห้ามใช้ val/test เพราะจะเป็นการรั่วไหลข้อมูล (ค่าเฉลี่ยของชุดทดสอบ
-        # จะแอบส่งผลต่อการเทรน ทำให้ผลดูดีเกินจริง)
+        # ห้ามใช้ val/test เพราะจะเป็นการแอบเอาข้อมูลชุดวัดผลมาใช้ตอนเทรน = ผลลัพธ์ไม่น่าเชื่อถือ
         metadata_stats = compute_metadata_stats(dfs["train"])
         print("  ค่าสถิติที่ใช้ปรับสเกล (คำนวณจากชุด train เท่านั้น):")
         for col, s in metadata_stats.items():
@@ -345,6 +344,11 @@ def main():
     # downsample_ratio = สัดส่วน normal:fracture ที่ต้องการต่อ epoch (เช่น 5.0 = 5:1)
     # ไม่ใส่ (None, ค่าเริ่มต้น) = ไม่ downsample เลย พฤติกรรมเหมือนเดิมทุกประการ
     downsample_ratio = cfg["data"].get("downsample_ratio")
+    # downsample_mode = "dynamic" (ค่าเริ่มต้น, พฤติกรรมเดิม) สุ่ม normal ใหม่ทุก epoch
+    # "fixed" สุ่มครั้งเดียวแล้วใช้ชุดเดิมซ้ำทุก epoch — ค่าเริ่มต้นทำให้ config เก่า
+    # ทุกไฟล์ที่มี downsample_ratio อยู่แล้ว (ไม่มีบรรทัด downsample_mode) ยังทำงาน
+    # เหมือนเดิมทุกประการ ไม่กระทบผลที่มีอยู่แล้วเลย
+    downsample_mode = cfg["data"].get("downsample_mode", "dynamic")
 
     for split in ["train", "val", "test"]:
         # augment_fn ส่งให้ "เฉพาะชุด train" เท่านั้น — val/test ได้ None เสมอ
@@ -356,9 +360,11 @@ def main():
                              channel_spec=channel_spec)
 
         if split == "train" and downsample_ratio is not None:
-            # ใช้ sampler แทน shuffle=True — สุ่มปล้อง normal ใหม่ทุก epoch ตาม ratio
-            # (val/test ไม่ downsample เลย ต้องวัดผลบนสัดส่วนธรรมชาติของโลกจริงเสมอ)
-            sampler = DownsampledNormalSampler(dfs["train"], ratio=downsample_ratio, seed=seed)
+            # ใช้ sampler แทน shuffle=True — สุ่มปล้อง normal ตาม ratio (dynamic/fixed
+            # แล้วแต่ downsample_mode) (val/test ไม่ downsample เลย ต้องวัดผลบน
+            # สัดส่วนธรรมชาติของโลกจริงเสมอ)
+            sampler = DownsampledNormalSampler(dfs["train"], ratio=downsample_ratio,
+                                               seed=seed, mode=downsample_mode)
             loaders[split] = DataLoader(
                 ds, batch_size=batch_size, sampler=sampler,   # sampler กับ shuffle ใช้พร้อมกันไม่ได้
                 num_workers=num_workers, pin_memory=(device == "cuda"),
