@@ -1,0 +1,37 @@
+# ablation ของ image preprocessing (experiment_summary หัวข้อ 7 ลำดับที่ 6)
+# ทั้ง 4 ไฟล์ในชุดนี้ต่างกันแค่บรรทัด data.preprocess บรรทัดเดียวเท่านั้น
+# ที่เหลือเหมือนกันหมดทุกตัวอักษร เพื่อให้ผลต่างที่เห็นมาจากการแต่งภาพล้วนๆ
+
+experiment:
+  name: effb0_masked_50ep15p_pp_baseline
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: multiclass
+  img_size: null
+  resize_mode: pad
+  preprocess: none          # <-- บรรทัดเดียวที่ต่างกันในชุดนี้
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 15
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb0_masked_50ep15p_pp_baseline

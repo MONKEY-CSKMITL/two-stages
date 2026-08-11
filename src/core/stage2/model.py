@@ -86,7 +86,10 @@ class VertebraClassifier(nn.Module):
                  freeze_backbone: bool = False,
                  use_metadata: bool = False,
                  num_metadata: int = 4,
-                 metadata_embed_dim: int = 16):
+                 metadata_embed_dim: int = 16,
+                 use_geometry: bool = False,
+                 num_geometry: int = 6,
+                 geometry_embed_dim: int = 16):
         """
         backbone        = ชื่อ backbone ("efficientnet_b0", "convnext_tiny", "rad_dino", ...)
         num_classes     = จำนวนคำตอบที่เป็นไปได้ (4 สำหรับ multiclass, 2 สำหรับ binary)
@@ -100,6 +103,11 @@ class VertebraClassifier(nn.Module):
         num_metadata    = จำนวน feature ของ metadata (4: อายุ เพศ น้ำหนัก ส่วนสูง)
         metadata_embed_dim = ขนาดเวกเตอร์หลังแปลง metadata (16 = เล็กกว่า level embedding
                           เพราะข้อมูลน้อยกว่าและเป็นระดับคนไข้ ไม่ควรมีอิทธิพลมากเกินไป)
+        use_geometry    = ใช้ฟีเจอร์รูปทรงของปล้อง (ar, fill, ...) ร่วมด้วยไหม
+                          ค่าเริ่มต้น False = ไม่ใช้ (พฤติกรรมเหมือนเดิมทุกประการ)
+                          เปิดพร้อม use_metadata ได้ เป็นคนละสายกัน
+        num_geometry    = จำนวน feature ของ geometry (6 ตัว ดู GEOMETRY_COLS ใน geometry.py)
+        geometry_embed_dim = ขนาดเวกเตอร์หลังแปลง geometry (16 เท่ากับ metadata)
         """
         super().__init__()
 
@@ -136,15 +144,35 @@ class VertebraClassifier(nn.Module):
         # ใช้ Linear + ReLU ชั้นเดียว เพื่อให้โมเดลเรียนรู้ความสัมพันธ์ระหว่าง feature ได้บ้าง
         # (เช่น "อายุมาก + น้ำหนักน้อย" อาจมีความหมายต่างจากแต่ละอย่างแยกกัน)
         self.use_metadata = use_metadata
+        extra_dim = 0       # ขนาดที่ input ของ head จะโตขึ้นจากสายเสริมทั้งหมดรวมกัน
+
         if use_metadata:
             self.metadata_encoder = nn.Sequential(
                 nn.Linear(num_metadata, metadata_embed_dim),
                 nn.ReLU(),
             )
-            extra_dim = metadata_embed_dim
+            extra_dim += metadata_embed_dim
         else:
             self.metadata_encoder = None
-            extra_dim = 0   # ไม่ใช้ metadata -> ขนาด input ของ head เท่าเดิมทุกประการ
+            # ไม่ใช้ metadata -> ขนาด input ของ head เท่าเดิมทุกประการ
+
+        # --- ชิ้นที่ 3ข (ไม่บังคับ): geometry encoder ---
+        # แปลงตัวเลขรูปทรง 6 ค่าของ "ปล้องนี้" เป็นเวกเตอร์
+        #
+        # แยกสายจาก metadata ไม่รวมเป็นเวกเตอร์เดียวกัน ด้วย 2 เหตุผล:
+        #   1. เป็นข้อมูลคนละระดับ (metadata = ระดับผู้ป่วย, geometry = ระดับปล้อง)
+        #      แยกสายทำให้เปิด/ปิดอิสระต่อกันได้ ทดลองแบบ 2x2 ได้ตรงไปตรงมา
+        #   2. เปิด geometry อย่างเดียวแล้วผลของ metadata เดิมต้องไม่เปลี่ยน —
+        #      ถ้ารวมเวกเตอร์กันจะทำให้ config เก่ารันซ้ำได้ผลไม่เหมือนเดิม
+        self.use_geometry = use_geometry
+        if use_geometry:
+            self.geometry_encoder = nn.Sequential(
+                nn.Linear(num_geometry, geometry_embed_dim),
+                nn.ReLU(),
+            )
+            extra_dim += geometry_embed_dim
+        else:
+            self.geometry_encoder = None
 
         # --- ชิ้นที่ 4: head (ตัวตัดสินใจตอบ) ---
         # nn.Sequential = ต่อชิ้นส่วนเรียงกัน ข้อมูลไหลผ่านทีละชิ้นตามลำดับ
@@ -156,12 +184,14 @@ class VertebraClassifier(nn.Module):
             nn.Linear(feat_dim + level_embed_dim + extra_dim, num_classes),
         )
 
-    def forward(self, image, level_idx, metadata=None):
+    def forward(self, image, level_idx, metadata=None, geometry=None):
         """
         image     = รูปทั้ง batch รูปร่าง (จำนวนรูป, 3, สูง, กว้าง)
         level_idx = ปล้องของแต่ละรูป รูปร่าง (จำนวนรูป,) ค่า 0-14
         metadata  = ข้อมูลผู้ป่วย รูปร่าง (จำนวนรูป, 4) — ใช้เฉพาะเมื่อ use_metadata=True
                     ถ้า use_metadata=False จะถูกเพิกเฉยทั้งหมด (ส่งมาหรือไม่ส่งก็ได้)
+        geometry  = รูปทรงของปล้อง รูปร่าง (จำนวนรูป, 6) — ใช้เฉพาะเมื่อ use_geometry=True
+                    หลักการเดียวกับ metadata ทุกประการ
 
         คืน logits รูปร่าง (จำนวนรูป, num_classes)
         (logits = คะแนนดิบของแต่ละคำตอบ ยังไม่ได้แปลงเป็นความน่าจะเป็น)
@@ -176,8 +206,13 @@ class VertebraClassifier(nn.Module):
                 raise ValueError("โมเดลตั้งค่า use_metadata=True แต่ไม่ได้ส่ง metadata เข้ามา")
             parts.append(self.metadata_encoder(metadata))   # (N, metadata_embed_dim)
 
+        if self.use_geometry:
+            if geometry is None:
+                raise ValueError("โมเดลตั้งค่า use_geometry=True แต่ไม่ได้ส่ง geometry เข้ามา")
+            parts.append(self.geometry_encoder(geometry))   # (N, geometry_embed_dim)
+
         # torch.cat(..., dim=1) = ต่อเวกเตอร์เข้าด้วยกันตามแนวนอน
-        # เช่น 1280 + 32 (+16 ถ้าใช้ metadata) = 1312 หรือ 1328 ตัว (ยังเป็น 1 แถวต่อ 1 รูป)
+        # เช่น 1280 + 32 (+16 ถ้าใช้ metadata) (+16 ถ้าใช้ geometry) = 1312 / 1328 / 1344
         fused = torch.cat(parts, dim=1)
 
         return self.head(fused)
@@ -192,14 +227,18 @@ def build_model(backbone: str = "efficientnet_b0",
                 freeze_backbone: bool = False,
                 use_metadata: bool = False,
                 num_metadata: int = 4,
-                metadata_embed_dim: int = 16) -> nn.Module:
+                metadata_embed_dim: int = 16,
+                use_geometry: bool = False,
+                num_geometry: int = 6,
+                geometry_embed_dim: int = 16) -> nn.Module:
     """
     ฟังก์ชันสร้างโมเดล — มีไว้เพื่อให้ train.py เรียกใช้ง่ายๆ ไม่ต้องรู้จักชื่อคลาสข้างใน
     (ถ้าวันหนึ่งเปลี่ยนโครงสร้างคลาสข้างใน train.py ก็ไม่ต้องแก้ตาม)
     """
     return VertebraClassifier(backbone, num_classes, num_levels, level_embed_dim,
                               pretrained, head_dropout, freeze_backbone,
-                              use_metadata, num_metadata, metadata_embed_dim)
+                              use_metadata, num_metadata, metadata_embed_dim,
+                              use_geometry, num_geometry, geometry_embed_dim)
 
 
 def count_parameters(model: nn.Module) -> dict:

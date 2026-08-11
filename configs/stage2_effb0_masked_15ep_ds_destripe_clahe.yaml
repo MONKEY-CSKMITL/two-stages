@@ -1,0 +1,40 @@
+# ชุด ablation หลัก — 15 epoch / patience 3 ให้ตรงกับการทดลองที่ 1-8 ในเอกสารสรุป
+# จึงเทียบกับตารางเดิมได้โดยตรง (ต่างจากชุด 50ep/15p ที่เทียบไม่ได้)
+
+experiment:
+  name: effb0_masked_15ep_ds_destripe_clahe
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: multiclass
+  img_size: null
+  resize_mode: pad
+  preprocess: destripe_clahe
+  augment: strong
+  geometry_manifest: data/interim/crops/manifest.csv
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+  use_geometry: false
+  use_metadata: false
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 15
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 3
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb0_masked_15ep_ds_destripe_clahe

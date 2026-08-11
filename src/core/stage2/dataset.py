@@ -38,6 +38,7 @@ from torch.utils.data import Dataset       # โครงมาตรฐาน�
 # import ฟังก์ชันเตรียมรูปจากไฟล์ transforms.py ที่อยู่โฟลเดอร์เดียวกัน
 # จุด (.) นำหน้าแปลว่า "หาจากโฟลเดอร์เดียวกันกับไฟล์นี้"
 from .transforms import prepare_image
+from .geometry import NUM_GEOMETRY, normalize_geometry_row
 
 
 # --- ตารางตั้งค่าของแต่ละโจทย์ ---
@@ -269,7 +270,8 @@ class VertebraDataset(Dataset):
 
     def __init__(self, df: pd.DataFrame, backbone: str = "efficientnet_b0",
                  img_size: int = None, metadata_stats: dict = None,
-                 resize_mode: str = "pad"):
+                 resize_mode: str = "pad", preprocess_fn=None,
+                 geometry_stats: dict = None, augment_fn=None, channel_spec=None):
         """
         df = ตารางจาก load_split_csv()
         backbone = ชื่อ backbone ที่จะเทรนด้วย (ใช้เลือกวิธี normalize ให้ตรงกัน)
@@ -279,26 +281,47 @@ class VertebraDataset(Dataset):
                          ไม่ใส่ (None, ค่าเริ่มต้น) = ไม่ใช้ metadata, จะคืนเวกเตอร์ศูนย์แทน
         resize_mode = "pad" (ค่าเริ่มต้น, พฤติกรรมเดิม) เติมขอบดำ รักษาสัดส่วนกระดูก
                       "stretch" ยืดเต็มกรอบ ไม่รักษาสัดส่วน (ใช้ได้กับ backbone ทั่วไปเท่านั้น)
+        preprocess_fn = (ไม่บังคับ) ฟังก์ชันแต่งภาพจาก preprocessing.py เช่น CLAHE
+                        ไม่ใส่ (None, ค่าเริ่มต้น) = ไม่แต่งภาพ พฤติกรรมเหมือนเดิมทุกประการ
+        geometry_stats = (ไม่บังคับ) ค่าสถิติสำหรับปรับสเกลฟีเจอร์รูปทรง (จาก
+                        compute_geometry_stats) ไม่ใส่ = ไม่ใช้ geometry, คืนเวกเตอร์ศูนย์
+                        โครงเดียวกับ metadata_stats ทุกประการ
+        augment_fn    = (ไม่บังคับ) ฟังก์ชันสุ่มดัดแปลงภาพจาก augment.py
+                        **ต้องส่งให้เฉพาะ dataset ของชุด train เท่านั้น**
+        channel_spec  = (ไม่บังคับ) สูตร 3 ช่องสีจาก channels.py
+                        ไม่ใส่ = ก๊อปช่องขาวดำ 3 ครั้งแบบเดิม
+                        ต่างจาก augment_fn ตรงที่ต้องใช้ **เหมือนกันทุก split**
+                        เพราะเป็นส่วนหนึ่งของ "วิธีอ่านภาพ" ไม่ใช่การเพิ่มความหลากหลาย
 
-        ไม่มีตัวเลือกดัดแปลงรูป — ทุกชุด (train/val/test) เตรียมรูปเหมือนกันหมด
-        คือย่อ+ปรับสเกลเท่านั้น ไม่มีการแต่งภาพใดๆ
+        ความต่างที่สำคัญระหว่าง preprocess_fn กับ augment_fn:
+          preprocess_fn = "วิธีอ่านภาพ" ต้องเหมือนกันทั้ง train/val/test และคงที่
+          augment_fn    = "การเพิ่มความหลากหลาย" สุ่มทุกครั้ง และทำเฉพาะ train
+        ถ้าเผลอส่ง augment_fn ให้ชุด val/test ผลวัดจะใช้ไม่ได้ทันที เพราะชุดทดสอบ
+        จะกลายเป็นคนละ distribution กับความเป็นจริง — จึงคุมด้วยการ "ไม่ส่งมา"
+        ที่ฝั่ง train.py แทนการมี flag ในนี้ ซึ่งเผลอตั้งผิดได้ง่ายกว่า
         """
         self.df = df.reset_index(drop=True)   # เก็บตารางไว้ใช้ (self = ตัวแปรของ object นี้)
         self.backbone = backbone
         self.img_size = img_size   # อาจเป็น None -> ให้ transforms.py เลือก default ให้เอง
         self.metadata_stats = metadata_stats
         self.resize_mode = resize_mode
+        self.preprocess_fn = preprocess_fn
+        self.geometry_stats = geometry_stats
+        self.augment_fn = augment_fn
+        self.channel_spec = channel_spec
 
     def __len__(self):
         return len(self.df)   # จำนวนแถวในตาราง = จำนวนตัวอย่างทั้งหมด
 
     def __getitem__(self, idx):
         """
-        คืนค่า 5 อย่างต่อ 1 ตัวอย่าง:
+        คืนค่า 6 อย่างต่อ 1 ตัวอย่าง:
           image        = รูป crop ที่เตรียมแล้ว (สิ่งที่โมเดลดู)
           level_idx    = ปล้องที่เท่าไหร่ 0-14 (สิ่งที่บอกโมเดลเพิ่ม)
-          metadata     = เวกเตอร์ 4 ค่า (อายุ เพศ น้ำหนัก ส่วนสูง) ที่ปรับสเกลแล้ว
+          metadata     = เวกเตอร์ 4 ค่า (อายุ เพศ น้ำหนัก ส่วนสูง) ที่ปรับสเกลแล้ว — ระดับผู้ป่วย
                          ถ้าไม่ได้เปิดใช้ metadata จะเป็นเวกเตอร์ศูนย์ (โมเดลจะไม่สนใจอยู่แล้ว)
+          geometry     = เวกเตอร์ 6 ค่าของรูปทรงปล้องนี้ (ar, fill, ...) ที่ปรับสเกลแล้ว — ระดับปล้อง
+                         ถ้าไม่ได้เปิดใช้ จะเป็นเวกเตอร์ศูนย์เช่นเดียวกัน
           label        = คำตอบที่ถูกต้องตามโจทย์ที่เลือก (ไม่ป้อนเข้าโมเดล ใช้เทียบตอนคำนวณความผิดพลาด)
           grade_4class = grade เดิม 4 ระดับเสมอ ไม่ว่าจะเลือกโจทย์ไหน (สำหรับตอนโหมด binary
                          จะได้แยกวิเคราะห์ได้ว่า "เสียหาย" ที่ทายถูก/ผิด เป็น grade ไหนบ้าง)
@@ -307,7 +330,8 @@ class VertebraDataset(Dataset):
 
         # เตรียมรูป (เรียกฟังก์ชันจาก transforms.py) — ส่ง backbone ไปด้วยให้เลือก normalize ถูกแบบ
         img = prepare_image(row["crop_path"], backbone=self.backbone, size=self.img_size,
-                            resize_mode=self.resize_mode)
+                            preprocess_fn=self.preprocess_fn, resize_mode=self.resize_mode,
+                            augment_fn=self.augment_fn, channel_spec=self.channel_spec)
 
         # แปลง level จาก 1-15 (แบบที่คนอ่าน) เป็น 0-14 (แบบที่โมเดลใช้)
         # เพราะตารางค้นหาใน level embedding เริ่มนับจากแถวที่ 0 ไม่ใช่แถวที่ 1
@@ -320,9 +344,15 @@ class VertebraDataset(Dataset):
         else:
             meta = np.zeros(NUM_METADATA, dtype=np.float32)
 
+        # geometry: หลักการเดียวกับ metadata เป๊ะ — ปิดใช้ = เวกเตอร์ศูนย์ขนาดคงที่
+        if self.geometry_stats is not None:
+            geom = normalize_geometry_row(row, self.geometry_stats)
+        else:
+            geom = np.zeros(NUM_GEOMETRY, dtype=np.float32)
+
         # torch.from_numpy(...) = แปลง numpy array เป็น tensor ของ PyTorch
         return (torch.from_numpy(img), level_idx, torch.from_numpy(meta),
-                int(row["label"]), int(row["grade_4class"]))
+                torch.from_numpy(geom), int(row["label"]), int(row["grade_4class"]))
 
 
 def compute_class_weights(df: pd.DataFrame, num_classes: int) -> torch.Tensor:
