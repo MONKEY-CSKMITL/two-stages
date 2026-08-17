@@ -1,0 +1,42 @@
+# การเปรียบเทียบหลัก: ชุดเดิม vs ชุดขยาย 10 เท่า
+#
+# ทุกอย่างเหมือนกันหมดทั้ง 6 รัน ยกเว้น 2 อย่าง: ชุดข้อมูล กับ seed
+# 50 epoch / patience 15 เท่ากันทุกรัน -> เทียบกันได้ตรงๆ ไม่มีตัวแปรตารางเทรนปน
+#
+# 3 seed ต่อเงื่อนไข เพราะวัดแล้วพบว่า macro F1 ของ config เดียวกันแกว่งได้ถึง
+# 2.9 pp ระหว่างรัน (0.567 vs 0.538) ทั้งที่ตั้ง seed เท่ากัน — เพราะ dataloader
+# หลาย worker กับ cuDNN ไม่ deterministic ถ้ารัน seed เดียวแล้วเห็นต่างกัน 2 pp
+# จะแยกไม่ออกว่าเป็นผลจริงหรือ noise
+#
+# ตัวชี้วัดที่ใช้ตัดสิน: recall ของ mild/moderate + AUC
+# ไม่ใช้ macro F1 เพราะแกว่งสูงและถูกครอบงำโดยคลาส normal ที่มี 1,548 ปล้อง
+
+experiment:
+  name: effb0_cmp_orig_50ep15p_s42
+  seed: 42
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: multiclass
+  img_size: null
+  resize_mode: pad
+  preprocess: destripe
+  augment: strong
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+loss:
+  gamma: 2.0
+  use_class_weights: true
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 0.0001
+  weight_decay: 0.0001
+  patience: 15
+  num_workers: 4
+output:
+  dir: outputs/runs/effb0_cmp_orig_50ep15p_s42

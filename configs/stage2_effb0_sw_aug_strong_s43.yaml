@@ -1,0 +1,35 @@
+# ชุดกวาดพารามิเตอร์ (sweep) — 50 epoch / patience 15 ทุกรัน
+# ทุกอย่างตรึงไว้เหมือนกันหมด ยกเว้นแกนที่กำลังกวาด กับ seed
+# Part A (sw_pp_*)  : กวาด preprocess ทั้ง 10 แบบ ตรึง augment=strong
+# Part B (sw_aug_*) : กวาด augment ทั้ง 7 แบบ ตรึง preprocess=destripe
+# รัน 2 seed ต่อจุด เพราะวัดแล้วพบว่า macro F1 แกว่งได้ถึง 2.9 pp ระหว่างรัน
+
+experiment:
+  name: effb0_sw_aug_strong_s43
+  seed: 43
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: multiclass
+  img_size: null
+  resize_mode: pad
+  preprocess: destripe
+  augment: strong
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+loss:
+  gamma: 2.0
+  use_class_weights: true
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 0.0001
+  weight_decay: 0.0001
+  patience: 15
+  num_workers: 4
+output:
+  dir: outputs/runs/effb0_sw_aug_strong_s43

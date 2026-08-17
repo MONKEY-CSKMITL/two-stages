@@ -1,0 +1,50 @@
+# ตัวควบคุมที่ขาดหายไป — จำเป็นต่อการตีความผลของชุด offline ทั้งหมด
+#
+# --- ปัญหาที่ config นี้แก้ ---
+# ตอนนี้เราเทียบชุด offline (mild 0.30) กับชุดอ้างอิง (mild 0.630) แล้วสรุปว่า
+# "offline ทำให้ mild พัง" ไม่ได้ เพราะ 2 ชุดนั้นต่างกัน 2 อย่างพร้อมกัน:
+#     1. ชุดข้อมูล   ขยาย 10 เท่าแบบแช่แข็ง  vs  ชุดเดิม
+#     2. ตารางเทรน   50 epoch / patience 15  vs  15 epoch / patience 3
+# ถ้าตัวแปรที่ 2 เป็นตัวการ (เทรนนานเกินจน overfit) การไปแก้ที่ชุดข้อมูลจะไม่มีวัน
+# ได้ผล — และมีเหตุให้สงสัยจริง เพราะ baseline 50 epoch เคยได้ mild เพียง 0.087
+# ขณะที่ baseline 15 epoch ได้ 0.217 (แย่ลง 2.5 เท่าเพราะตารางเทรนอย่างเดียว)
+#
+# --- config นี้คือชุดอ้างอิงเดิมเป๊ะ เปลี่ยนแค่ตารางเทรน ---
+# xray_masked + destripe + strong (สูตรที่ทำ mild 0.630 ได้) แต่รัน 50 ep / p15
+# ถ้าผลออกมา mild ตกลงมาใกล้ 0.30 -> ตัวการคือตารางเทรน ไม่ใช่ชุด offline
+# ถ้ายังอยู่ราว 0.60      -> ตัวการคือชุด offline จริง ต้องแก้ที่ชุดข้อมูล
+
+experiment:
+  name: effb0_ctrl_otf_destripe_strong_50ep15p
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: multiclass
+  img_size: null
+  resize_mode: pad
+  preprocess: destripe
+  augment: strong
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 15
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb0_ctrl_otf_destripe_strong_50ep15p

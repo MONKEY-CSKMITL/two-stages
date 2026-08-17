@@ -1,0 +1,45 @@
+# สร้างอัตโนมัติโดย scripts/build_augmented_trainset.py — แก้ได้ตามสบาย
+#
+# สำคัญ: variant นี้เป็นภาพที่ผ่าน preprocess + augment มาแล้วตั้งแต่ตอนสร้างไฟล์
+# จึงต้องตั้ง data.preprocess และ data.augment เป็น none ทั้งคู่ ไม่งั้นภาพจะโดน
+# แต่งซ้ำสองชั้น (ซึ่งไม่ใช่สิ่งที่ต้องการวัด)
+#
+# ชุด train มี 14,754 แถว = 1.75x ของเดิม (8,409)
+# ฉะนั้น 1 epoch ที่นี่ = 1.75 epoch ของชุดเดิม
+# ตั้ง epochs = 50 -> เท่ากับ ~88 epoch ของชุดเดิมในแง่จำนวน gradient step
+# เวลาเทียบกับตารางผลเดิม (ซึ่งรันที่ 15 epoch) ต้องระบุตัวเลขนี้กำกับไว้ด้วยเสมอ
+
+experiment:
+  name: effb0_masked_destripe_standard_shape_cls1-10-10-10_50ep15p
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked_destripe_standard_shape_cls1-10-10-10
+  task: multiclass
+  img_size: null
+  resize_mode: pad
+  preprocess: none
+  augment: none
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 15
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb0_masked_destripe_standard_shape_cls1-10-10-10_50ep15p

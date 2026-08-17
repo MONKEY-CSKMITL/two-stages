@@ -40,7 +40,7 @@ from core.stage2.dataset import (load_split_csv, VertebraDataset,
                                  compute_class_weights, TASKS,
                                  load_metadata, attach_metadata,
                                  compute_metadata_stats, NUM_METADATA)
-from core.stage2.augment import get_augment_fn
+from core.stage2.augment import get_augment_fn, GEOMETRIC_AUGMENTS
 from core.stage2.channels import get_channel_spec, warn_if_mask_unusable
 from core.stage2.geometry import (load_geometry, attach_geometry,
                                   compute_geometry_stats, NUM_GEOMETRY)
@@ -333,7 +333,7 @@ def main():
     # กันพลาด: การหมุน/เลื่อนต้องมีพื้นที่ดำรองรับ ถ้าใช้ stretch จะไม่มีเลย
     # มุมของกระดูกจะถูกตัดหายทันที — หยุดตั้งแต่ตอนนี้ดีกว่าปล่อยให้เทรนจนจบแล้ว
     # ค่อยมางงว่าทำไมผลแย่
-    if augment_name in ("geometric", "standard", "strong") and resize_mode == "stretch":
+    if augment_name in GEOMETRIC_AUGMENTS and resize_mode == "stretch":
         raise ValueError(
             f"data.augment='{augment_name}' มีการหมุน/เลื่อน ใช้กับ resize_mode='stretch' ไม่ได้ "
             f"(ไม่มีพื้นที่ว่างรองรับ กระดูกจะโดนตัดมุม) — ใช้ resize_mode='pad' "
@@ -423,10 +423,71 @@ def main():
     # --- loss + optimizer ---
     # น้ำหนักถ่วงคลาสคำนวณจากชุด train เท่านั้น (ห้ามใช้ val/test เด็ดขาด
     # เพราะจะเป็นการแอบเอาข้อมูลชุดวัดผลมาใช้ตอนเทรน = ผลลัพธ์ไม่น่าเชื่อถือ)
+    #
+    # class_weights_from ควบคุมว่าจะนับจาก "แถวไหน" ของชุด train (มีผลมากกับชุด
+    # ที่ผ่านการคูณข้อมูลแบบ offline):
+    #   "train"  (ค่าเริ่มต้น, พฤติกรรมเดิม) นับทุกแถวรวมสำเนาที่ถูก augment
+    #   "source" นับเฉพาะแถวต้นฉบับ (aug_index == 0) = การกระจายคลาสจริงของโลก
+    #
+    # ทำไมต้องมีตัวเลือกนี้: สูตร w_c = N/(K*n_c) ทำให้ n_c*w_c เท่ากันทุกคลาสเสมอ
+    # ฉะนั้นการคูณคลาสน้อยขึ้น 10 เท่า **ไม่ได้เพิ่มสมดุลเลย** แต่กลับไปลด "น้ำหนัก
+    # ต่อ 1 ตัวอย่าง" ของคลาสน้อยลง 10 เท่า (mild 9.39 -> 1.65) วัดผลจริงแล้วพบว่า
+    # โมเดลระวังตัวมากขึ้นจนแทบไม่ยอมทายว่าผิดปกติ (normal recall 0.99, mild 0.13)
+    # ตั้งเป็น "source" แล้วจะได้ทั้งสองอย่าง: น้ำหนักต่อตัวอย่างแรงเท่าเดิม
+    # บวกกับจำนวนครั้งที่คลาสน้อยถูกหยิบมาอัปเดต gradient เพิ่มขึ้น 10 เท่า
     alpha = None
     if cfg["loss"].get("use_class_weights", True):
-        alpha = compute_class_weights(dfs["train"], num_classes).to(device)
-        print(f"น้ำหนักถ่วงคลาส: {[round(float(w), 2) for w in alpha]}")
+        weight_src = cfg["loss"].get("class_weights_from", "train")
+        wdf = dfs["train"]
+        if weight_src == "source":
+            if "aug_index" not in wdf.columns:
+                raise ValueError(
+                    "loss.class_weights_from='source' ต้องใช้กับ variant ที่สร้างด้วย "
+                    "build_augmented_trainset.py (ต้องมีคอลัมน์ aug_index) — "
+                    "ชุดนี้ไม่มี ให้ใช้ค่าเริ่มต้น 'train' แทน"
+                )
+            wdf = wdf[wdf["aug_index"] == 0]
+        elif weight_src != "train":
+            raise ValueError(f"loss.class_weights_from ต้องเป็น 'train' หรือ 'source' ได้รับ '{weight_src}'")
+
+        alpha = compute_class_weights(wdf, num_classes)
+        print(f"น้ำหนักถ่วงคลาส (นับจาก '{weight_src}', {len(wdf):,} แถว): "
+              f"{[round(float(w), 2) for w in alpha]}")
+
+        # --- ปรับน้ำหนักเองทับสูตรอัตโนมัติ ---
+        # ทำไมต้องมี: สูตรอัตโนมัติแจกน้ำหนักตาม "ความหายาก" ไม่ใช่ "ความยาก"
+        # ซึ่งในชุดนี้เรียงกลับทางกันพอดี — severe หายากสุด (195 ปล้อง) เลยได้
+        # น้ำหนักสูงสุด 10.78 ทั้งที่ recall 0.714 ดีเป็นอันดับ 2 อยู่แล้ว ส่วน
+        # moderate มี 286 ปล้องเลยได้น้อยสุดในกลุ่มผิดปกติ (7.35) ทั้งที่ recall
+        # 0.471 แย่ที่สุด สูตรความถี่มองความต่างนี้ไม่เห็นเพราะมันดูแค่จำนวน
+        #
+        # class_weight_scale = ตัวคูณทับน้ำหนักอัตโนมัติ (ยาวเท่าจำนวนคลาส)
+        #     เช่น [1.0, 1.5, 2.0, 1.0] = ดัน mild 1.5 เท่า, moderate 2 เท่า
+        #     เก็บฐานอัตโนมัติไว้ จึงยังปรับตามการกระจายของชุดข้อมูลอยู่
+        # class_weights = ระบุน้ำหนักเองทั้งชุด ไม่สนสูตรอัตโนมัติเลย
+        #     ใช้เมื่อต้องการคุมเป๊ะและรายงานตัวเลขตรงๆ ในเล่ม
+        #
+        # ⚠️ focal loss (gamma=2) มีกลไก "โฟกัสตัวอย่างยาก" อยู่แล้วในตัว การดัน
+        # น้ำหนักเองซ้อนอีกชั้นจึงทับซ้อนกันได้ ถ้าดันแรงเกินไปโมเดลจะเริ่มทาย
+        # ผิดปกติมั่วจน normal recall ร่วง — ต้องดู normal recall ควบคู่เสมอ
+        # ไม่ใช่ดูแต่ recall ของคลาสที่ดันขึ้น
+        manual = cfg["loss"].get("class_weights")
+        scale = cfg["loss"].get("class_weight_scale")
+        if manual is not None and scale is not None:
+            raise ValueError("loss.class_weights กับ loss.class_weight_scale ใช้พร้อมกันไม่ได้ "
+                             "— เลือกอย่างใดอย่างหนึ่ง")
+        if manual is not None:
+            if len(manual) != num_classes:
+                raise ValueError(f"loss.class_weights ต้องมี {num_classes} ค่า ได้รับ {len(manual)}")
+            alpha = torch.tensor([float(x) for x in manual], dtype=torch.float32)
+            print(f"  -> ใช้น้ำหนักที่ระบุเอง: {[round(float(w), 2) for w in alpha]}")
+        elif scale is not None:
+            if len(scale) != num_classes:
+                raise ValueError(f"loss.class_weight_scale ต้องมี {num_classes} ค่า ได้รับ {len(scale)}")
+            alpha = alpha * torch.tensor([float(x) for x in scale], dtype=torch.float32)
+            print(f"  -> คูณด้วย {list(scale)} -> {[round(float(w), 2) for w in alpha]}")
+
+        alpha = alpha.to(device)
 
     # เลือก loss function จาก config — ค่าเริ่มต้น "focal" เพื่อให้ config เก่าทุกไฟล์
     # ที่ไม่มีบรรทัด loss.type ระบุไว้ (รันมาแล้วก่อนหน้านี้ทั้งหมด) ยังทำงานเหมือนเดิม

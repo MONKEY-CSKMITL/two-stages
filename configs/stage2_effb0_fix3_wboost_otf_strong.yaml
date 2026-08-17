@@ -1,0 +1,60 @@
+# แก้ปัญหาที่พบจากการทดลอง cls1-10-10-10 รอบแรก (mild ตกเหลือ 0.130)
+#
+# --- สาเหตุที่วัดได้ ---
+# ชุด offline ถูกจำได้หมดตั้งแต่ epoch 3 (train_loss 0.297 -> 0.025) เพราะภาพ
+# 1 ปล้องมีแค่ 10 หน้าตาตายตัว ต่างจาก on-the-fly ที่ได้หน้าตาใหม่ทุก epoch
+# (train_loss ของ destripe+strong on-the-fly ที่ epoch 15 ยังอยู่ที่ 0.123)
+#
+# --- สิ่งที่ config นี้ทำต่างจากรอบแรก ---
+# เปิด data.augment ทับชุด offline อีกชั้น = ได้ทั้ง 2 อย่างพร้อมกัน
+#   ไฟล์ 10 เท่าบนดิสก์ (นับได้ ชี้ให้ดูได้)  +  หน้าตาใหม่ทุก epoch (จำไม่ได้)
+# ผลพลอยได้ที่สำคัญ: on-the-fly ทำกับ **ทุกคลาส** รวม normal ที่ไม่ได้คูณ จึงลบ
+# ทางลัด "ภาพที่ถูกดัดแปลง = ไม่ปกติ" ที่ชุด offline สร้างขึ้นโดยไม่ตั้งใจไปด้วย
+#
+# --- ทำไมยังเปิด use_class_weights ไว้ ---
+# สูตรน้ำหนัก N/(K*n_c) ทำให้น้ำหนักรวมของทุกคลาสเท่ากันเป๊ะเสมอ (n_c x w_c = N/K)
+# = สมดุลสมบูรณ์ 1:1 ซึ่ง **ดีกว่า** 3.4:1 ที่ได้จากการคูณข้อมูลอย่างเดียว
+# ถ้าปิดน้ำหนักเพื่อ "ให้การคูณข้อมูลมีผล" สมดุลจะแย่ลง ไม่ใช่ดีขึ้น
+# สิ่งที่การคูณข้อมูลให้เพิ่มจริงคือ จำนวนครั้งที่ mild ถูกหยิบมาอัปเดต gradient
+# (10 ครั้ง/epoch ด้วยภาพคนละหน้าตา แทน 1 ครั้งที่ถ่วงน้ำหนักหนัก) = variance ต่ำลง
+#
+# preprocess ยังเป็น none เพราะ destripe ถูก bake ลงไฟล์ไปแล้วตอนสร้างชุด
+
+experiment:
+  name: effb0_fix3_wboost_otf_strong
+  seed: 42
+
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked_destripe_standard_cls1-10-10-10
+  task: multiclass
+  img_size: null
+  resize_mode: pad
+  preprocess: none
+  augment: strong
+
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+
+loss:
+  gamma: 2.0
+  use_class_weights: true
+  class_weights_from: source
+  # ดัน mild 1.5x, moderate 2.0x เพื่อชดเชยที่สูตรความถี่แจกน้ำหนักตามความหายาก
+  # ไม่ใช่ความยาก — severe คงไว้ 1.0 เพราะได้ 10.78 อยู่แล้วและ recall ดีเป็นอันดับ 2
+  class_weight_scale: [1.0, 1.5, 2.0, 1.0]
+
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 15
+  num_workers: 4
+
+output:
+  dir: outputs/runs/effb0_fix3_wboost_otf_strong
