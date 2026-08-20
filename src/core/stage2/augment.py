@@ -480,6 +480,26 @@ def augment_standard_shape(img: Image.Image) -> Image.Image:
     return img
 
 
+def augment_strong_shape(img: Image.Image) -> Image.Image:
+    """
+    strong + 3 ตัวที่เปลี่ยนรูปทรง (flip / scale / elastic)
+
+    เหตุผลที่ทำ: จาก sweep พบว่า strong ได้ macro F1 สูงสุด (0.614) ส่วน
+    standard_shape ได้ mild/moderate สูงสุด (0.457 / 0.627) — เก่งคนละด้าน
+    และการเติม shape ให้ standard เพิ่มผลได้ +3.5 pp (0.577 -> 0.612)
+    ชุดนี้ทดสอบว่าเติมให้ strong แล้วได้ผลเหมือนกันไหม
+
+    ⚠️ ข้อควรระวังที่ต่างจาก standard_shape: strong มีการหมุน/เลื่อนแรงกว่าอยู่แล้ว
+    (±10°/±7% ที่ p=0.7 เทียบกับ ±7°/±5% ที่ p=0.5) การเติม scale/elastic/flip
+    เข้าไปอีกจึงอาจถึงจุดอิ่มตัว หรือบิดจนภาพเสียมากกว่าได้ประโยชน์
+    โอกาสที่ภาพจะไม่ถูกแตะเลยเหลือ 0.14% และเฉลี่ยโดน 4.2 transform ต่อภาพ
+    (standard_shape อยู่ที่ 0.77% และ 3.6 ตัว)
+    """
+    img = augment_strong(img)
+    img = augment_shape(img)
+    return img
+
+
 # ============================================================================
 # ทะเบียนชื่อ -> ฟังก์ชัน (โครงเดียวกับ PREPROCESS_FNS ใน preprocessing.py)
 # ============================================================================
@@ -494,12 +514,14 @@ AUGMENT_FNS = {
     # --- กลุ่มที่เปลี่ยนรูปทรง (ดูคำเตือนที่หัวข้อฟังก์ชัน) ---
     "shape": augment_shape,
     "standard_shape": augment_standard_shape,
+    "strong_shape": augment_strong_shape,
 }
 
 # ชุดที่มี transform เชิงเรขาคณิต — ใช้กับ resize_mode="stretch" ไม่ได้ เพราะไม่มี
 # พื้นที่ดำรองรับ มุมกระดูกจะถูกตัดหายทันที เก็บไว้ที่เดียวเพื่อให้ train.py กับ
 # สคริปต์อื่นเช็คตรงกัน ไม่ต้องไล่แก้หลายที่เวลาเพิ่มชุดใหม่
-GEOMETRIC_AUGMENTS = {"geometric", "standard", "strong", "shape", "standard_shape"}
+GEOMETRIC_AUGMENTS = {"geometric", "standard", "strong", "shape", "standard_shape",
+                      "strong_shape"}
 
 
 def get_augment_fn(name):

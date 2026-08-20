@@ -1,0 +1,38 @@
+# ชุด 10x + ดันน้ำหนักคลาส [normal, mild, moderate, severe] = [1.0, 1.5, 2.0, 1.0]
+# เหตุผล: สูตร N/(K*n_c) ทำให้ n_c*w_c เท่ากันทุกคลาสเสมอ การคูณข้อมูล
+# จึงไม่ได้เพิ่มสมดุลเลย ต้องดันน้ำหนักเองถึงจะเปลี่ยนจุดตัดจริง
+
+experiment:
+  name: effb0_x10w_m15d20_s42
+  seed: 42
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked_flatten_strong_cls1-10-10-10
+  task: multiclass
+  img_size: null
+  resize_mode: pad
+  preprocess: none
+  augment: strong
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+loss:
+  gamma: 2.0
+  use_class_weights: true
+  class_weight_scale:
+  - 1.0
+  - 1.5
+  - 2.0
+  - 1.0
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 0.0001
+  weight_decay: 0.0001
+  patience: 15
+  num_workers: 4
+output:
+  dir: outputs/runs/effb0_x10w_m15d20_s42

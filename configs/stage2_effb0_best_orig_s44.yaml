@@ -1,0 +1,33 @@
+# เทียบชุดเดิม vs ชุด 10x ที่ค่าที่ดีที่สุดจาก sweep
+# preprocess=flatten · augment=strong · 50ep/p15 · 3 seed
+# ทั้งสองฝั่งใช้ augment สุ่มสดเหมือนกัน ต่างกันแค่ชุดข้อมูล
+
+experiment:
+  name: effb0_best_orig_s44
+  seed: 44
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: multiclass
+  img_size: null
+  resize_mode: pad
+  preprocess: flatten
+  augment: strong
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+loss:
+  gamma: 2.0
+  use_class_weights: true
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 0.0001
+  weight_decay: 0.0001
+  patience: 15
+  num_workers: 4
+output:
+  dir: outputs/runs/effb0_best_orig_s44
