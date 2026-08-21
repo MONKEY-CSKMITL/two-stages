@@ -1,0 +1,41 @@
+# โจทย์ binary (grade 1/2/3 ยุบเป็น "damaged") ที่สูตรดีที่สุดจาก sweep
+#
+# ทำไม binary + ชุด 10x ถึงน่าสนใจเป็นพิเศษ:
+#   ชุดเดิม  undamaged 7,704 : damaged   705  = 10.93 : 1
+#   ชุด 10x  undamaged 7,704 : damaged 7,050  =  1.09 : 1  <- สมดุลเกือบเป๊ะ
+# เพราะ grade 1/2/3 ยุบเป็นคลาสเดียวและถูกคูณ 10 เท่าทั้งสามคลาส ต่างจาก multiclass
+# ที่การคูณกระจายไป 3 คลาสแยกกันจนไม่เปลี่ยนสมดุลที่โมเดลเห็น
+#
+# ⚠️ macro F1 ของ binary เทียบกับ multiclass ตรงๆ ไม่ได้ — เฉลี่ยแค่ 2 คลาสและมี
+# คลาส normal ที่ง่ายมากอยู่ด้วย ตัวเลขจะสูงกว่าโดยธรรมชาติ
+# ตัวที่ใช้ตัดสินจริงคือ recall ราย grade เดิม (จับ mild ได้กี่ %) ซึ่ง train.py พิมพ์ให้อยู่แล้ว
+
+experiment:
+  name: effb0_bin_orig_s42
+  seed: 42
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: binary
+  img_size: null
+  resize_mode: pad
+  preprocess: flatten
+  augment: strong
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+loss:
+  gamma: 2.0
+  use_class_weights: true
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 0.0001
+  weight_decay: 0.0001
+  patience: 15
+  num_workers: 4
+output:
+  dir: outputs/runs/effb0_bin_orig_s42

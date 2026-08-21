@@ -1,0 +1,39 @@
+# binary + ทำซ้ำแถว 10 เท่า + **ปิดน้ำหนักคลาส**
+#
+# ทำไมต้องปิด: สูตร w = N/(K*n_c) ทำให้ n_c*w_c เท่ากันทุกคลาสเสมอ การทำซ้ำ damaged
+# 10 เท่าจึงถูกหักล้างทิ้ง แถมยังลดน้ำหนักต่อ 1 ตัวอย่างจาก 5.96 เหลือ 1.05 (5.7 เท่า)
+# วัดผลแล้วพบว่า mild recall ตกจาก 0.511 (ชุดเดิม) เหลือ 0.261 (rep10 + เปิดน้ำหนัก)
+#
+# ปิดน้ำหนักไปเลย = ให้สมดุลมาจาก "จำนวนแถวจริง" (7,050 : 7,704 = 1.09:1) แทน
+# ทุกตัวอย่างน้ำหนัก 1.0 เท่ากัน ไม่มีการเจือจางน้ำหนักของเคสยาก
+# นี่คือวิธี oversampling แบบมาตรฐานจริงๆ ซึ่งยังไม่เคยทดสอบแบบสะอาดสักครั้ง
+
+experiment:
+  name: effb0_bin_rep10_nw_s42
+  seed: 42
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked_rep1-10-10-10
+  task: binary
+  img_size: null
+  resize_mode: pad
+  preprocess: flatten
+  augment: strong
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+loss:
+  gamma: 2.0
+  use_class_weights: false
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 0.0001
+  weight_decay: 0.0001
+  patience: 15
+  num_workers: 4
+output:
+  dir: outputs/runs/effb0_bin_rep10_nw_s42

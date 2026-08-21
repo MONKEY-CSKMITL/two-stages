@@ -1,0 +1,39 @@
+# binary + ทำซ้ำแถว 10 เท่า (ไม่อบ augment ลงไฟล์)
+#
+# แก้ความไม่สมมาตรที่วัดได้จากชุด bin_x10: ที่นั่นสำเนา 1-9 ของคลาส damaged ถูกอบ
+# augment ไว้แล้วโดน augment สุ่มสดทับอีก = 2 ชั้น ขณะที่ normal โดนแค่ 1 ชั้น
+# วัดจากปล้องผิดปกติจริง 40 ใบ: 1 ชั้น ห่างจากภาพจริง 23.24 · 2 ชั้น 40.75 (1.75 เท่า)
+# โมเดลจึงเรียนว่า damaged = ปล้องที่บิดเบี้ยวหนัก แต่ชุด test ไม่ถูก augment เลย
+#
+# ชุดนี้ทุกแถวชี้ไฟล์ต้นฉบับเดียวกัน -> augment สุ่มสด 1 ชั้นเท่ากันทุกคลาส
+# แต่ damaged ยังถูกหยิบมาอัปเดต gradient 10 เท่าต่อ epoch ด้วยหน้าตาต่างกันทุกครั้ง
+
+experiment:
+  name: effb0_bin_rep10_s43
+  seed: 43
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked_rep1-10-10-10
+  task: binary
+  img_size: null
+  resize_mode: pad
+  preprocess: flatten
+  augment: strong
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+loss:
+  gamma: 2.0
+  use_class_weights: true
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 0.0001
+  weight_decay: 0.0001
+  patience: 15
+  num_workers: 4
+output:
+  dir: outputs/runs/effb0_bin_rep10_s43

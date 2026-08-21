@@ -1,0 +1,44 @@
+# binary + สมดุล 1:1 เป๊ะ ด้วยการ down ปล้อง normal (ไม่ใช้น้ำหนักคลาส)
+#
+# ที่มา: rep10 + ปิดน้ำหนัก ได้สมดุลแค่ 1.09:1 ซึ่งยังเอียงไปทาง normal
+# ส่วน rep10 + เปิดน้ำหนัก ได้ 1:1 เชิงน้ำหนักก็จริง แต่แลกมาด้วยการที่น้ำหนัก
+# ต่อ 1 ตัวอย่างถูกเจือจางจาก 5.96 เหลือ 1.05 (วัดแล้วทำ mild ตกจาก 0.511 -> 0.261)
+#
+# ชุดนี้ได้ 1:1 เป๊ะโดยไม่ต้องพึ่งน้ำหนักเลย -> ทุกตัวอย่างน้ำหนัก 1.0 เท่ากัน
+# ไม่มีการเจือจาง และไม่มีความไม่สมดุลหลงเหลือ
+#
+# downsample_mode: dynamic = สุ่มปล้อง normal ชุดใหม่ทุก epoch
+# ทำให้ตลอดการเทรนโมเดลยังได้เห็นปล้อง normal เกือบครบ ไม่ถูกล็อกอยู่กลุ่มเดียว
+# down เป็น 1:1 อย่างเดียว ไม่ทำซ้ำ
+
+experiment:
+  name: effb0_bin_ds11_s43
+  seed: 43
+data:
+  split_dir: data/processed/splits
+  variant: xray_masked
+  task: binary
+  img_size: null
+  resize_mode: pad
+  preprocess: flatten
+  augment: strong
+  downsample_ratio: 1.0
+  downsample_mode: dynamic
+model:
+  backbone: efficientnet_b0
+  pretrained: true
+  level_embed_dim: 32
+  head_dropout: 0.2
+  freeze_backbone: false
+loss:
+  gamma: 2.0
+  use_class_weights: false
+train:
+  epochs: 50
+  batch_size: 64
+  lr: 0.0001
+  weight_decay: 0.0001
+  patience: 15
+  num_workers: 4
+output:
+  dir: outputs/runs/effb0_bin_ds11_s43
