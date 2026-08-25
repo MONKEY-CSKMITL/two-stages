@@ -267,7 +267,10 @@ def main():
 
     fig.suptitle(f"Grad-CAM — {cfg['experiment']['name']} ({args.split} set)\n"
                  f"red/yellow = high influence on the decision", fontsize=13)
+    # เว้นช่องระหว่างแถวให้พอ ไม่งั้นหัวข้อของแถวล่างไปทับภาพของแถวบน
+    # (tight_layout อย่างเดียวไม่พอ เพราะ title มี 2 บรรทัด)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.subplots_adjust(hspace=0.28)
 
     plots_dir = out_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
